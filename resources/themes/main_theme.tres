@@ -1,0 +1,31 @@
+[gd_resource type="Theme" format=3]
+
+[resource]
+default_font_size = 16
+
+Button/colors/font_color = Color(0.969, 0.98, 0.988, 1)
+Button/colors/font_hover_color = Color(0.29, 0.565, 0.851, 1)
+Button/colors/font_pressed_color = Color(0.204, 0.396, 0.596, 1)
+Button/colors/font_disabled_color = Color(0.443, 0.502, 0.588, 0.5)
+Button/font_sizes/font_size = 18
+
+Label/colors/font_color = Color(0.969, 0.98, 0.988, 1)
+Label/font_sizes/font_size = 16
+
+LineEdit/colors/font_color = Color(0.969, 0.98, 0.988, 1)
+LineEdit/colors/caret_color = Color(0.29, 0.565, 0.851, 1)
+LineEdit/font_sizes/font_size = 16
+
+RichTextLabel/colors/default_color = Color(0.969, 0.98, 0.988, 1)
+RichTextLabel/font_sizes/normal_font_size = 14
+
+OptionButton/colors/font_color = Color(0.969, 0.98, 0.988, 1)
+OptionButton/colors/font_hover_color = Color(0.29, 0.565, 0.851, 1)
+OptionButton/font_sizes/font_size = 16
+
+CheckBox/colors/font_color = Color(0.969, 0.98, 0.988, 1)
+CheckBox/colors/font_hover_color = Color(0.29, 0.565, 0.851, 1)
+
+HSlider/colors/font_color = Color(0.969, 0.98, 0.988, 1)
+
+SpinBox/colors/font_color = Color(0.969, 0.98, 0.988, 1)

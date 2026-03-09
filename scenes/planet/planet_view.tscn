@@ -1,0 +1,90 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/planet_view.gd" id="1"]
+
+[node name="PlanetView" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.102, 0.102, 0.18, 1)
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 40
+theme_override_constants/margin_top = 30
+theme_override_constants/margin_right = 40
+theme_override_constants/margin_bottom = 30
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="PlanetNameLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.29, 0.565, 0.851, 1)
+theme_override_font_sizes/font_size = 32
+text = "Planet Name"
+
+[node name="FactionLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 14
+text = "Faction — Zone"
+
+[node name="HSeparator" type="HSeparator" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="InfoPanel" type="VBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="CaptainInfo" type="Label" parent="MarginContainer/VBoxContainer/InfoPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+text = "Captain Name  |  Level 1  |  XP: 0/100  |  Credits: 500"
+
+[node name="ShipInfo" type="Label" parent="MarginContainer/VBoxContainer/InfoPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+text = "Skiff  |  Hull: 50/50  |  Fuel: 30/30  |  Cargo: 0/10  |  Crew: 0/0"
+
+[node name="HSeparator2" type="HSeparator" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="MessageLog" type="RichTextLabel" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+scroll_following = true
+text = ""
+
+[node name="ButtonRow" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="SaveButton" type="Button" parent="MarginContainer/VBoxContainer/ButtonRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(120, 40)
+text = "Save Game"
+
+[node name="MenuButton" type="Button" parent="MarginContainer/VBoxContainer/ButtonRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(120, 40)
+text = "Main Menu"

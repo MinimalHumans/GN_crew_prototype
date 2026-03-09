@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pandoc \"D:/06_GitHub/Godot/GN_crew_prototype/docs/gravity-nexus-prototype-gdd.docx\" -o \"D:/06_GitHub/Godot/GN_crew_prototype/docs/prototype-gdd.md\")",
+      "Bash(python \"C:/Users/csmal/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/cf26d2a0-af27-4403-871f-c1b1d33bec25/4d39e50f-8885-465c-9640-34119173bc72/skills/docx/scripts/office/unpack.py\" \"D:/06_GitHub/Godot/GN_crew_prototype/docs/gravity-nexus-prototype-gdd.docx\" \"D:/06_GitHub/Godot/GN_crew_prototype/docs/prototype-gdd-unpacked/\")",
+      "Bash(pip install defusedxml)",
+      "Bash(python \"C:/Users/csmal/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/cf26d2a0-af27-4403-871f-c1b1d33bec25/4d39e50f-8885-465c-9640-34119173bc72/skills/docx/scripts/office/unpack.py\" \"D:/06_GitHub/Godot/GN_crew_prototype/docs/gravity-nexus-crew-system-gdd.docx\" \"D:/06_GitHub/Godot/GN_crew_prototype/docs/crew-system-gdd-unpacked/\")"
+    ]
+  }
+}

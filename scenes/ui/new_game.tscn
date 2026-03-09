@@ -1,0 +1,156 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/new_game.gd" id="1"]
+
+[node name="NewGame" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.102, 0.102, 0.18, 1)
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -240.0
+offset_top = -260.0
+offset_right = 240.0
+offset_bottom = 260.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 20
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="TitleLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.29, 0.565, 0.851, 1)
+theme_override_font_sizes/font_size = 28
+text = "New Game"
+horizontal_alignment = 1
+
+[node name="IntroLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 14
+text = "You are a solo captain, a Skiff-class ship, and the open stars.
+Choose your name and begin your journey."
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="NameSection" type="VBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="NameLabel" type="Label" parent="MarginContainer/VBoxContainer/NameSection"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Captain Name"
+
+[node name="NameOptionButton" type="OptionButton" parent="MarginContainer/VBoxContainer/NameSection"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 36)
+
+[node name="CustomNameInput" type="LineEdit" parent="MarginContainer/VBoxContainer/NameSection"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 36)
+placeholder_text = "Enter custom name..."
+max_length = 24
+
+[node name="DebugSection" type="VBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="DebugToggleButton" type="Button" parent="MarginContainer/VBoxContainer/DebugSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 13
+text = "Show Debug Options"
+flat = true
+
+[node name="DebugPanel" type="VBoxContainer" parent="MarginContainer/VBoxContainer/DebugSection"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="DebugLabel" type="Label" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.65, 0.2, 1)
+theme_override_font_sizes/font_size = 12
+text = "DEBUG — Development testing options"
+
+[node name="CreditsRow" type="HBoxContainer" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel"]
+layout_mode = 2
+
+[node name="CreditsLabel" type="Label" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel/CreditsRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(140, 0)
+theme_override_font_sizes/font_size = 14
+text = "Starting Credits"
+
+[node name="CreditsSpinBox" type="SpinBox" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel/CreditsRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="LevelRow" type="HBoxContainer" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel"]
+layout_mode = 2
+
+[node name="LevelLabel" type="Label" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel/LevelRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(140, 0)
+theme_override_font_sizes/font_size = 14
+text = "Starting Level"
+
+[node name="LevelSpinBox" type="SpinBox" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel/LevelRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ShipRow" type="HBoxContainer" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel"]
+layout_mode = 2
+
+[node name="ShipLabel" type="Label" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel/ShipRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(140, 0)
+theme_override_font_sizes/font_size = 14
+text = "Starting Ship"
+
+[node name="ShipOptionButton" type="OptionButton" parent="MarginContainer/VBoxContainer/DebugSection/DebugPanel/ShipRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Spacer" type="Control" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 8)
+
+[node name="StartButton" type="Button" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 48)
+theme_override_font_sizes/font_size = 20
+text = "Start Game"
+
+[node name="BackButton" type="Button" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 36)
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 14
+text = "Back"
+flat = true
