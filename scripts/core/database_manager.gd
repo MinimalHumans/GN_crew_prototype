@@ -182,6 +182,19 @@ func _create_tables() -> void:
 		)
 	""")
 
+	db.query("""
+		CREATE TABLE IF NOT EXISTS visited_planets (
+			id INTEGER PRIMARY KEY,
+			save_id INTEGER NOT NULL,
+			planet_id INTEGER NOT NULL,
+			first_visited_day INTEGER DEFAULT 1,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (save_id) REFERENCES save_state(id),
+			FOREIGN KEY (planet_id) REFERENCES planets(id),
+			UNIQUE(save_id, planet_id)
+		)
+	""")
+
 
 # === SEED DATA ===
 
@@ -391,7 +404,7 @@ func _create_ship(save_id: int, ship_class: String) -> void:
 	var ship_data: Dictionary = get_ship_template(ship_class)
 	db.query_with_bindings(
 		"INSERT INTO ships (save_id, class, name, hull_current, hull_max, fuel_current, fuel_max, cargo_max, crew_max, food_supply) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		[save_id, ship_data.class, ship_data.name, ship_data.hull_max, ship_data.hull_max,
+		[save_id, ship_data["class"], ship_data.name, ship_data.hull_max, ship_data.hull_max,
 		 ship_data.fuel_max, ship_data.fuel_max, ship_data.cargo_max, ship_data.crew_max, 0.0]
 	)
 
@@ -543,6 +556,47 @@ func update_cargo(save_id: int, commodity_id: int, quantity: int) -> void:
 
 func delete_save(save_id: int) -> void:
 	## Deletes a save and all associated data.
-	for table: String in ["cargo", "missions_active", "ships", "captain_stats"]:
+	for table: String in ["cargo", "missions_active", "visited_planets", "ships", "captain_stats"]:
 		db.query_with_bindings("DELETE FROM %s WHERE save_id = ?" % table, [save_id])
 	db.query_with_bindings("DELETE FROM save_state WHERE id = ?", [save_id])
+
+
+# === VISITED PLANETS ===
+
+func mark_planet_visited(save_id: int, planet_id: int, day: int) -> void:
+	db.query_with_bindings(
+		"INSERT OR IGNORE INTO visited_planets (save_id, planet_id, first_visited_day) VALUES (?, ?, ?)",
+		[save_id, planet_id, day]
+	)
+
+
+func is_planet_visited(save_id: int, planet_id: int) -> bool:
+	var result: Array = db.select_rows(
+		"visited_planets",
+		"save_id = %d AND planet_id = %d" % [save_id, planet_id],
+		["id"]
+	)
+	return not result.is_empty()
+
+
+func get_visited_planet_ids(save_id: int) -> Array[int]:
+	var result: Array = db.select_rows("visited_planets", "save_id = %d" % save_id, ["planet_id"])
+	var ids: Array[int] = []
+	for row: Dictionary in result:
+		ids.append(row.planet_id)
+	return ids
+
+
+# === CARGO HELPERS ===
+
+func get_total_cargo(save_id: int) -> int:
+	## Returns total units of cargo currently held.
+	var cargo_rows: Array = get_cargo(save_id)
+	var total: int = 0
+	for row: Dictionary in cargo_rows:
+		total += row.quantity
+	return total
+
+
+func get_all_routes() -> Array:
+	return db.select_rows("routes", "", ["*"])

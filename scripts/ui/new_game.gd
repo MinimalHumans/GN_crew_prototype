@@ -128,7 +128,7 @@ func _override_starting_ship(target_class: String) -> void:
 	## Debug override: replace starting Skiff with a different ship class.
 	var template: Dictionary = DatabaseManager.get_ship_template(target_class)
 	DatabaseManager.update_ship(GameManager.current_ship_id, {
-		"class": template.class,
+		"class": template["class"],
 		"name": template.name,
 		"hull_current": template.hull_max,
 		"hull_max": template.hull_max,

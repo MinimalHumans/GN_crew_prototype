@@ -20,71 +20,234 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.102, 0.102, 0.18, 1)
 
-[node name="MarginContainer" type="MarginContainer" parent="."]
+[node name="HSplit" type="HSplitContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/margin_left = 40
-theme_override_constants/margin_top = 30
-theme_override_constants/margin_right = 40
-theme_override_constants/margin_bottom = 30
+split_offset = -20
 
-[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+[node name="LeftPanel" type="PanelContainer" parent="HSplit"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 1.0
+
+[node name="Margin" type="MarginContainer" parent="HSplit/LeftPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="LeftVBox" type="VBoxContainer" parent="HSplit/LeftPanel/Margin"]
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="PlanetNameLabel" type="Label" parent="MarginContainer/VBoxContainer"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.29, 0.565, 0.851, 1)
-theme_override_font_sizes/font_size = 32
-text = "Planet Name"
-
-[node name="FactionLabel" type="Label" parent="MarginContainer/VBoxContainer"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
-theme_override_font_sizes/font_size = 14
-text = "Faction — Zone"
-
-[node name="HSeparator" type="HSeparator" parent="MarginContainer/VBoxContainer"]
-layout_mode = 2
-
-[node name="InfoPanel" type="VBoxContainer" parent="MarginContainer/VBoxContainer"]
+[node name="PlanetSection" type="VBoxContainer" parent="HSplit/LeftPanel/Margin/LeftVBox"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="CaptainInfo" type="Label" parent="MarginContainer/VBoxContainer/InfoPanel"]
+[node name="PlanetRect" type="ColorRect" parent="HSplit/LeftPanel/Margin/LeftVBox/PlanetSection"]
+layout_mode = 2
+custom_minimum_size = Vector2(200, 200)
+color = Color(0.2, 0.35, 0.55, 1)
+
+[node name="PlanetNameLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/PlanetSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.29, 0.565, 0.851, 1)
+theme_override_font_sizes/font_size = 28
+text = "Planet Name"
+
+[node name="FactionLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/PlanetSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 13
+text = "Hub — Commonwealth Zone"
+
+[node name="Sep1" type="HSeparator" parent="HSplit/LeftPanel/Margin/LeftVBox"]
+layout_mode = 2
+
+[node name="PlayerSection" type="VBoxContainer" parent="HSplit/LeftPanel/Margin/LeftVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="PlayerHeader" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/PlayerSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 11
+text = "CAPTAIN"
+
+[node name="CaptainNameLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/PlayerSection"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Cpt. Harlow"
+
+[node name="LevelRow" type="HBoxContainer" parent="HSplit/LeftPanel/Margin/LeftVBox/PlayerSection"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="LevelLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/PlayerSection/LevelRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(50, 0)
+theme_override_font_sizes/font_size = 13
+text = "Lvl 1"
+
+[node name="XPBar" type="ProgressBar" parent="HSplit/LeftPanel/Margin/LeftVBox/PlayerSection/LevelRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 16)
+max_value = 100.0
+show_percentage = false
+
+[node name="CreditsLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/PlayerSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.82, 0.35, 1)
+theme_override_font_sizes/font_size = 15
+text = "500 credits"
+
+[node name="Sep2" type="HSeparator" parent="HSplit/LeftPanel/Margin/LeftVBox"]
+layout_mode = 2
+
+[node name="ShipSection" type="VBoxContainer" parent="HSplit/LeftPanel/Margin/LeftVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="ShipHeader" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 11
+text = "SHIP"
+
+[node name="ShipNameLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 15
-text = "Captain Name  |  Level 1  |  XP: 0/100  |  Credits: 500"
+text = "Skiff  (Skiff-class)"
 
-[node name="ShipInfo" type="Label" parent="MarginContainer/VBoxContainer/InfoPanel"]
+[node name="HullRow" type="HBoxContainer" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 15
-text = "Skiff  |  Hull: 50/50  |  Fuel: 30/30  |  Cargo: 0/10  |  Crew: 0/0"
+theme_override_constants/separation = 8
 
-[node name="HSeparator2" type="HSeparator" parent="MarginContainer/VBoxContainer"]
+[node name="HullLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection/HullRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(36, 0)
+theme_override_font_sizes/font_size = 12
+text = "Hull"
+
+[node name="HullBar" type="ProgressBar" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection/HullRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 14)
+max_value = 50.0
+value = 50.0
+show_percentage = false
+
+[node name="HullValue" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection/HullRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(60, 0)
+theme_override_font_sizes/font_size = 12
+text = "50/50"
+horizontal_alignment = 2
+
+[node name="FuelRow" type="HBoxContainer" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="FuelLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection/FuelRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(36, 0)
+theme_override_font_sizes/font_size = 12
+text = "Fuel"
+
+[node name="FuelBar" type="ProgressBar" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection/FuelRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 14)
+max_value = 30.0
+value = 30.0
+show_percentage = false
+
+[node name="FuelValue" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection/FuelRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(60, 0)
+theme_override_font_sizes/font_size = 12
+text = "30/30"
+horizontal_alignment = 2
+
+[node name="CargoLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Cargo: 0 / 10 units"
+
+[node name="FoodLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Food: N/A (solo)"
+
+[node name="CrewLabel" type="Label" parent="HSplit/LeftPanel/Margin/LeftVBox/ShipSection"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Crew: 0 / 0"
+
+[node name="RightPanel" type="PanelContainer" parent="HSplit"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 1.0
+
+[node name="Margin" type="MarginContainer" parent="HSplit/RightPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="RightVBox" type="VBoxContainer" parent="HSplit/RightPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ServiceHeader" type="Label" parent="HSplit/RightPanel/Margin/RightVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 11
+text = "SERVICES"
+
+[node name="ServiceContainer" type="VBoxContainer" parent="HSplit/RightPanel/Margin/RightVBox"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Sep3" type="HSeparator" parent="HSplit/RightPanel/Margin/RightVBox"]
 layout_mode = 2
 
-[node name="MessageLog" type="RichTextLabel" parent="MarginContainer/VBoxContainer"]
+[node name="LogHeader" type="Label" parent="HSplit/RightPanel/Margin/RightVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 11
+text = "LOG"
+
+[node name="MessageLog" type="RichTextLabel" parent="HSplit/RightPanel/Margin/RightVBox"]
 layout_mode = 2
 size_flags_vertical = 3
 bbcode_enabled = true
 scroll_following = true
-text = ""
 
-[node name="ButtonRow" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+[node name="BottomBar" type="HBoxContainer" parent="HSplit/RightPanel/Margin/RightVBox"]
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="SaveButton" type="Button" parent="MarginContainer/VBoxContainer/ButtonRow"]
+[node name="DayLabel" type="Label" parent="HSplit/RightPanel/Margin/RightVBox/BottomBar"]
 layout_mode = 2
-custom_minimum_size = Vector2(120, 40)
-text = "Save Game"
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
+theme_override_font_sizes/font_size = 13
+text = "Day 1"
 
-[node name="MenuButton" type="Button" parent="MarginContainer/VBoxContainer/ButtonRow"]
+[node name="SaveButton" type="Button" parent="HSplit/RightPanel/Margin/RightVBox/BottomBar"]
 layout_mode = 2
-custom_minimum_size = Vector2(120, 40)
+custom_minimum_size = Vector2(100, 32)
+text = "Save"
+
+[node name="MenuButton" type="Button" parent="HSplit/RightPanel/Margin/RightVBox/BottomBar"]
+layout_mode = 2
+custom_minimum_size = Vector2(100, 32)
 text = "Main Menu"

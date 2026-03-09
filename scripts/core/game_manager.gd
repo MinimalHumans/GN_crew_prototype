@@ -17,6 +17,20 @@ const FRIGATE_UNLOCK_LEVEL: int = 7
 const CORVETTE_PRICE: int = 2000
 const FRIGATE_PRICE: int = 8000
 
+# Fuel cost per jump by ship class (per user spec)
+const FUEL_PER_JUMP_SKIFF: float = 3.0
+const FUEL_PER_JUMP_CORVETTE: float = 5.0
+const FUEL_PER_JUMP_FRIGATE: float = 8.0
+
+# Food consumption per crew member per jump (solo captain eats nothing for Phase 1)
+const FOOD_PER_CREW_PER_JUMP: float = 1.0
+
+# Encounter probability by danger level (per jump)
+const ENCOUNTER_CHANCE_LOW: float = 0.10
+const ENCOUNTER_CHANCE_LOW_MEDIUM: float = 0.18
+const ENCOUNTER_CHANCE_MEDIUM: float = 0.25
+const ENCOUNTER_CHANCE_HIGH: float = 0.40
+
 # === CURRENT GAME STATE (in-memory) ===
 var save_id: int = -1
 var captain_name: String = ""
@@ -48,6 +62,12 @@ var food_supply: float = 0.0
 
 var is_game_active: bool = false
 
+# Travel state (set before entering travel view)
+var travel_destination_id: int = -1
+var travel_route: Dictionary = {}
+var travel_jumps: int = 0
+var travel_fuel_cost: float = 0.0
+
 
 # === INITIALIZATION ===
 
@@ -63,6 +83,9 @@ func start_new_game(p_captain_name: String, starting_credits: int = 500, startin
 	# Load the state we just created
 	_load_state_from_db()
 	is_game_active = true
+
+	# Mark Haven as visited
+	DatabaseManager.mark_planet_visited(save_id, current_planet_id, day_count)
 
 	EventBus.game_started.emit(captain_name)
 	EventBus.planet_arrived.emit(current_planet_id, _get_planet_name(current_planet_id))
@@ -119,7 +142,7 @@ func _refresh_ship_state() -> void:
 	var ship: Dictionary = DatabaseManager.get_ship(current_ship_id)
 	if ship.is_empty():
 		return
-	ship_class = ship.class
+	ship_class = ship["class"]
 	ship_name = ship.name
 	hull_current = ship.hull_current
 	hull_max = ship.hull_max
@@ -222,6 +245,128 @@ func get_xp_progress() -> float:
 	return float(captain_xp - current_threshold) / float(range_size)
 
 
+# === TRAVEL ===
+
+func get_fuel_cost_per_jump() -> float:
+	## Returns fuel cost per jump based on ship class.
+	match ship_class:
+		"skiff":
+			return FUEL_PER_JUMP_SKIFF
+		"corvette":
+			return FUEL_PER_JUMP_CORVETTE
+		"frigate":
+			return FUEL_PER_JUMP_FRIGATE
+		_:
+			return FUEL_PER_JUMP_SKIFF
+
+
+func get_food_cost_per_jump() -> float:
+	## Returns food consumed per jump based on crew count.
+	## Solo play (crew_max 0) = 0 food cost. Ready for Phase 2.
+	# TODO: In Phase 2, count actual crew aboard and apply species modifiers.
+	return 0.0 * FOOD_PER_CREW_PER_JUMP
+
+
+func get_encounter_chance(danger_level: String) -> float:
+	match danger_level:
+		"low":
+			return ENCOUNTER_CHANCE_LOW
+		"low_medium":
+			return ENCOUNTER_CHANCE_LOW_MEDIUM
+		"medium":
+			return ENCOUNTER_CHANCE_MEDIUM
+		"high":
+			return ENCOUNTER_CHANCE_HIGH
+		_:
+			return ENCOUNTER_CHANCE_LOW
+
+
+func get_danger_display(danger_level: String) -> String:
+	## Returns a player-facing danger string with color hint.
+	match danger_level:
+		"low":
+			return "Low"
+		"low_medium":
+			return "Low-Medium"
+		"medium":
+			return "Medium"
+		"high":
+			return "High"
+		_:
+			return "Unknown"
+
+
+func get_danger_color(danger_level: String) -> String:
+	## Returns a BBCode hex color for the danger level.
+	match danger_level:
+		"low":
+			return "#27AE60"
+		"low_medium":
+			return "#7FB069"
+		"medium":
+			return "#E67E22"
+		"high":
+			return "#C0392B"
+		_:
+			return "#718096"
+
+
+func begin_travel(destination_id: int) -> void:
+	## Sets up travel state and transitions to the travel view.
+	travel_destination_id = destination_id
+	travel_route = DatabaseManager.get_route_between(current_planet_id, destination_id)
+	if travel_route.is_empty():
+		push_error("No route between %d and %d" % [current_planet_id, destination_id])
+		return
+	travel_jumps = travel_route.jumps
+	travel_fuel_cost = travel_jumps * get_fuel_cost_per_jump()
+
+	EventBus.travel_started.emit(current_planet_id, destination_id, travel_jumps)
+	change_scene("res://scenes/travel/travel_view.tscn")
+
+
+func arrive_at_planet(planet_id: int) -> void:
+	## Called when travel is complete. Updates state and transitions to planet view.
+	current_planet_id = planet_id
+	DatabaseManager.mark_planet_visited(save_id, planet_id, day_count)
+	save_game()
+
+	EventBus.travel_completed.emit(planet_id)
+	EventBus.planet_arrived.emit(planet_id, _get_planet_name(planet_id))
+	change_scene("res://scenes/planet/planet_view.tscn")
+
+
+func process_jump() -> Dictionary:
+	## Processes a single jump: fuel, food, day advance.
+	## Returns a dictionary with what happened.
+	var result: Dictionary = {
+		"fuel_used": get_fuel_cost_per_jump(),
+		"food_used": get_food_cost_per_jump(),
+		"day": day_count,
+	}
+
+	# Deduct fuel
+	fuel_current = maxf(0.0, fuel_current - result.fuel_used)
+	EventBus.fuel_changed.emit(fuel_current, fuel_max)
+
+	# Deduct food (0 for solo play, ready for Phase 2)
+	food_supply = maxf(0.0, food_supply - result.food_used)
+	EventBus.food_changed.emit(food_supply)
+
+	# Advance day
+	day_count += 1
+	EventBus.day_advanced.emit(day_count)
+
+	# Persist ship fuel/food changes
+	if current_ship_id >= 0:
+		DatabaseManager.update_ship(current_ship_id, {
+			"fuel_current": fuel_current,
+			"food_supply": food_supply,
+		})
+
+	return result
+
+
 # === SCENE MANAGEMENT ===
 
 func change_scene(scene_path: String) -> void:
@@ -242,17 +387,22 @@ func get_current_planet() -> Dictionary:
 	return DatabaseManager.get_planet(current_planet_id)
 
 
-func get_fuel_cost_per_jump() -> float:
-	## Returns fuel cost per jump based on ship class.
-	match ship_class:
-		"skiff":
-			return 5.0
-		"corvette":
-			return 10.0
-		"frigate":
-			return 20.0
-		_:
-			return 5.0
+func get_total_cargo() -> int:
+	return DatabaseManager.get_total_cargo(save_id)
+
+
+func get_food_days_remaining() -> String:
+	## Returns a display string for food supply.
+	## In solo play, food doesn't deplete, so show "N/A".
+	if crew_max == 0:
+		if food_supply > 0:
+			return "%.0f units" % food_supply
+		return "N/A (solo)"
+	var daily_rate: float = get_food_cost_per_jump()
+	if daily_rate <= 0:
+		return "%.0f units" % food_supply
+	var days: float = food_supply / daily_rate
+	return "%.0f days" % days
 
 
 func can_afford_ship(target_class: String) -> bool:
