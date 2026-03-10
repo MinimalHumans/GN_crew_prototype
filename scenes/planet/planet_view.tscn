@@ -242,6 +242,11 @@ theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
 theme_override_font_sizes/font_size = 13
 text = "Day 1"
 
+[node name="ShipButton" type="Button" parent="HSplit/RightPanel/Margin/RightVBox/BottomBar"]
+layout_mode = 2
+custom_minimum_size = Vector2(100, 32)
+text = "Ship View"
+
 [node name="SaveButton" type="Button" parent="HSplit/RightPanel/Margin/RightVBox/BottomBar"]
 layout_mode = 2
 custom_minimum_size = Vector2(100, 32)

@@ -26,6 +26,10 @@ const FUEL_PER_JUMP_FRIGATE: float = 8.0
 const FOOD_PER_CAPTAIN_PER_JUMP: float = 1.0
 const FOOD_PER_CREW_PER_JUMP: float = 1.0
 
+# Crew constants
+const RECRUITMENT_FEE: int = 50
+const KRELLVANI_SLOT_COST_CORVETTE: float = 1.5
+
 # Mission constants
 const MAX_ACTIVE_MISSIONS: int = 3
 const DIFFICULTY_SCALE_BASE: int = 40
@@ -227,6 +231,20 @@ func _check_level_up() -> void:
 			reflexes += STAT_PER_LEVEL
 			social += STAT_PER_LEVEL
 			resourcefulness += STAT_PER_LEVEL
+
+			# Persist immediately so stats survive a crash
+			DatabaseManager.update_captain_stats(save_id, {
+				"stamina": stamina,
+				"cognition": cognition,
+				"reflexes": reflexes,
+				"social": social,
+				"resourcefulness": resourcefulness,
+			})
+			DatabaseManager.update_save_state(save_id, {
+				"captain_level": captain_level,
+				"captain_xp": captain_xp,
+			})
+
 			EventBus.level_up.emit(captain_level)
 			EventBus.stats_changed.emit()
 		else:
@@ -267,9 +285,10 @@ func get_fuel_cost_per_jump() -> float:
 
 
 func get_food_cost_per_jump() -> float:
-	## Returns food consumed per jump. Captain always eats 1 unit.
-	## In Phase 2, crew will add to this cost.
-	return FOOD_PER_CAPTAIN_PER_JUMP
+	## Returns food consumed per jump. Captain eats 1 unit. Each crew eats 1 unit.
+	## Vellani eat 0.7x (handled in Phase 3 with species traits).
+	var crew_count: int = DatabaseManager.get_active_crew_count(save_id)
+	return FOOD_PER_CAPTAIN_PER_JUMP + crew_count * FOOD_PER_CREW_PER_JUMP
 
 
 func get_encounter_chance(danger_level: String) -> float:
@@ -415,6 +434,84 @@ func can_afford_ship(target_class: String) -> bool:
 			return false
 
 
+func get_ship_price(target_class: String) -> int:
+	match target_class:
+		"corvette":
+			return CORVETTE_PRICE
+		"frigate":
+			return FRIGATE_PRICE
+		_:
+			return 0
+
+
+func get_ship_unlock_level(target_class: String) -> int:
+	match target_class:
+		"corvette":
+			return CORVETTE_UNLOCK_LEVEL
+		"frigate":
+			return FRIGATE_UNLOCK_LEVEL
+		_:
+			return 1
+
+
+func purchase_ship(target_class: String) -> bool:
+	## Purchases a new ship. Carries over fuel (capped), cargo, and food.
+	## Returns false if can't afford or level too low.
+	if not can_afford_ship(target_class):
+		return false
+
+	# No downgrading
+	var class_order: Dictionary = {"skiff": 0, "corvette": 1, "frigate": 2}
+	var current_rank: int = class_order.get(ship_class, 0)
+	var target_rank: int = class_order.get(target_class, 0)
+	if target_rank <= current_rank:
+		return false
+
+	var price: int = get_ship_price(target_class)
+	var template: Dictionary = DatabaseManager.get_ship_template(target_class)
+
+	# Spend credits
+	spend_credits(price)
+
+	# Create new ship in DB
+	DatabaseManager.create_ship_for_save(save_id, target_class)
+
+	# Get the new ship id (most recently created)
+	var new_ship_id: int = DatabaseManager.get_latest_ship_id(save_id)
+	if new_ship_id < 0:
+		push_error("Failed to create new ship")
+		return false
+
+	# Carry over fuel (capped to new max)
+	var carried_fuel: float = minf(fuel_current, template.fuel_max)
+	# Carry over food
+	var carried_food: float = food_supply
+
+	# Update new ship with carried-over values
+	DatabaseManager.update_ship(new_ship_id, {
+		"fuel_current": carried_fuel,
+		"food_supply": carried_food,
+	})
+
+	# Update save to point to new ship
+	current_ship_id = new_ship_id
+	DatabaseManager.update_save_state(save_id, {
+		"current_ship_id": current_ship_id,
+	})
+
+	# Refresh cached ship state
+	_refresh_ship_state()
+
+	# Emit signals
+	EventBus.ship_purchased.emit(target_class)
+	EventBus.fuel_changed.emit(fuel_current, fuel_max)
+	EventBus.food_changed.emit(food_supply)
+	EventBus.hull_changed.emit(hull_current, hull_max)
+
+	save_game()
+	return true
+
+
 func get_cargo_space_remaining() -> int:
 	return cargo_max - get_total_cargo()
 
@@ -438,6 +535,7 @@ func buy_commodity(commodity_id: int, quantity: int, price_per_unit: int) -> boo
 
 func sell_commodity(commodity_id: int, quantity: int, price_per_unit: int) -> bool:
 	## Sells cargo. Returns false if insufficient cargo.
+	## Awards 1 XP per 50 credits of estimated profit.
 	var current_qty: int = DatabaseManager.get_cargo_quantity(save_id, commodity_id)
 	if current_qty < quantity:
 		return false
@@ -446,6 +544,16 @@ func sell_commodity(commodity_id: int, quantity: int, price_per_unit: int) -> bo
 	add_credits(revenue)
 	EventBus.cargo_changed.emit(commodity_id, current_qty - quantity)
 	EventBus.trade_completed.emit(commodity_id, quantity, revenue, false)
+
+	# Trading XP: estimate profit against galaxy average buy price
+	var averages: Dictionary = DatabaseManager.get_galaxy_averages()
+	if averages.has(commodity_id):
+		var avg_buy: float = averages[commodity_id].avg_buy
+		var profit: int = int(revenue - avg_buy * quantity)
+		if profit > 0:
+			var trade_xp: int = profit / 50
+			if trade_xp > 0:
+				add_xp(trade_xp)
 	return true
 
 
@@ -584,6 +692,138 @@ func resolve_challenge(stat_value: int, difficulty: int) -> Dictionary:
 		tier = "critical_failure"
 
 	return {"tier": tier, "roll": roll}
+
+
+# === CREW MANAGEMENT ===
+
+func get_crew_roster() -> Array[CrewMember]:
+	## Returns all active crew as CrewMember objects.
+	var rows: Array = DatabaseManager.get_active_crew(save_id)
+	var roster: Array[CrewMember] = []
+	for row: Dictionary in rows:
+		roster.append(CrewMember.from_dict(row))
+	return roster
+
+
+func get_crew_count() -> int:
+	return DatabaseManager.get_active_crew_count(save_id)
+
+
+func get_used_crew_slots() -> float:
+	## Returns total crew slots used, accounting for Krellvani 1.5x on Corvette.
+	var crew: Array = DatabaseManager.get_active_crew(save_id)
+	var used: float = 0.0
+	for row: Dictionary in crew:
+		if row.species == "KRELLVANI" and ship_class == "corvette":
+			used += KRELLVANI_SLOT_COST_CORVETTE
+		else:
+			used += 1.0
+	return used
+
+
+func get_available_crew_slots() -> float:
+	return float(crew_max) - get_used_crew_slots()
+
+
+func can_recruit(candidate: CrewMember) -> Dictionary:
+	## Returns {"can": bool, "reason": String}.
+	if crew_max <= 0:
+		return {"can": false, "reason": "Your ship has no crew berths."}
+	var slot_cost: float = candidate.get_crew_slot_cost(ship_class)
+	if get_available_crew_slots() < slot_cost:
+		if candidate.species == CrewMember.Species.KRELLVANI and ship_class == "corvette":
+			return {"can": false, "reason": "Not enough crew slots. Krellvani require 1.5 slots on a Corvette."}
+		return {"can": false, "reason": "Crew is full (%d/%d)." % [get_crew_count(), crew_max]}
+	if credits < RECRUITMENT_FEE:
+		return {"can": false, "reason": "Not enough credits for recruitment fee (%d cr)." % RECRUITMENT_FEE}
+	return {"can": true, "reason": ""}
+
+
+func calculate_acceptance(candidate: CrewMember) -> float:
+	## Returns acceptance probability (0.0-1.0).
+	var prob: float = 70.0
+
+	# Pay split modifier
+	if pay_split >= 0.6:
+		prob -= 15.0
+	elif pay_split <= 0.4:
+		prob += 15.0
+	# 0.5 = no change
+
+	# Level bonus
+	prob += captain_level * 2.0
+
+	# Quality penalty: -1% per avg stat above 55
+	var avg_stat: float = candidate.get_average_stat()
+	if avg_stat > 55.0:
+		prob -= (avg_stat - 55.0)
+
+	return clampf(prob, 20.0, 95.0)
+
+
+func recruit_crew(candidate: CrewMember) -> Dictionary:
+	## Attempts to recruit a candidate. Returns {result: "accept"/"reluctant"/"decline", crew_id: int}.
+	var check: Dictionary = can_recruit(candidate)
+	if not check.can:
+		return {"result": "blocked", "reason": check.reason, "crew_id": -1}
+
+	var prob: float = calculate_acceptance(candidate)
+	var roll: float = randf() * 100.0
+
+	if roll <= prob:
+		# Full accept
+		return _finalize_recruitment(candidate, 60.0, "accept")
+	elif roll <= prob + 15.0:
+		# Reluctant accept
+		return _finalize_recruitment(candidate, 45.0, "reluctant")
+	else:
+		# Decline
+		return {"result": "decline", "crew_id": -1}
+
+
+func _finalize_recruitment(candidate: CrewMember, starting_morale: float, result_type: String) -> Dictionary:
+	## Adds crew to DB, creates relationships, deducts fee.
+	spend_credits(RECRUITMENT_FEE)
+
+	var data: Dictionary = candidate.to_dict()
+	data["morale"] = starting_morale
+	data["hired_day"] = day_count
+
+	var crew_id: int = DatabaseManager.insert_crew_member(save_id, data)
+
+	# Create relationship rows with all existing crew
+	var existing_crew: Array = DatabaseManager.get_active_crew(save_id)
+	for row: Dictionary in existing_crew:
+		if row.id == crew_id:
+			continue
+		var existing_species: CrewMember.Species = CrewMember._parse_species(row.species)
+		var friction: int = CrewMember.get_friction_between(candidate.species, existing_species)
+		DatabaseManager.insert_crew_relationship(crew_id, row.id, float(friction))
+
+	EventBus.crew_recruited.emit(crew_id, candidate.crew_name)
+	EventBus.crew_changed.emit()
+	save_game()
+
+	return {"result": result_type, "crew_id": crew_id}
+
+
+func dismiss_crew(crew_id: int) -> void:
+	## Dismisses a crew member (sets inactive, removes relationships).
+	var crew_data: Dictionary = DatabaseManager.get_crew_member(crew_id)
+	var crew_name: String = crew_data.get("name", "Unknown")
+
+	DatabaseManager.deactivate_crew_member(crew_id)
+	DatabaseManager.delete_crew_relationships(crew_id)
+
+	EventBus.crew_dismissed.emit(crew_id, crew_name)
+	EventBus.crew_changed.emit()
+	save_game()
+
+
+func set_pay_split(new_split: float) -> void:
+	pay_split = new_split
+	DatabaseManager.update_save_state(save_id, {"pay_split": pay_split})
+	EventBus.pay_split_changed.emit(pay_split)
 
 
 func _get_stat(stat_name: String) -> int:

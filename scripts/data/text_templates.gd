@@ -125,7 +125,110 @@ const PLANET_POSITIONS: Dictionary = {
 }
 
 
+# === CREW NAME POOLS ===
+# 28–30 names per species.
+
+const HUMAN_NAMES: Array[String] = [
+	"Marcus", "Elena", "Jin", "Priya", "Osei", "Rosa", "Dmitri", "Fatima",
+	"Carlos", "Anika", "Tomas", "Lena", "Yusuf", "Cora", "Ravi", "Sofia",
+	"Henrik", "Amara", "Kenji", "Nadia", "Luis", "Ingrid", "Zane", "Mira",
+	"Owen", "Adeline", "Felix", "Vera", "Samir", "Hana",
+]
+
+const GORVIAN_NAMES: Array[String] = [
+	"Dvarra", "Korrath", "Sethi", "Voss", "Thenn", "Irrik", "Maldrek",
+	"Zolvar", "Fennoth", "Sarrek", "Kellun", "Brassen", "Vekkor", "Torenn",
+	"Aldris", "Norrek", "Galveth", "Ossren", "Drevak", "Pellarn",
+	"Krissov", "Fennald", "Dorrath", "Ullvek", "Grennoth", "Salvik",
+	"Tessorn", "Vorrath", "Bennok", "Ardrek",
+]
+
+const VELLANI_NAMES: Array[String] = [
+	"Lirien", "Tessari", "Kael", "Wynna", "Aelith", "Sorenn", "Mellira",
+	"Faelinn", "Thyra", "Ioleth", "Caelen", "Nivari", "Ellisande", "Pyriel",
+	"Dael", "Miravel", "Solinne", "Kaethis", "Veradine", "Lyraeth",
+	"Tessiel", "Wynael", "Corael", "Isenne", "Aelora", "Quilleth",
+	"Fennara", "Silvael", "Thalien", "Orianna",
+]
+
+const KRELLVANI_NAMES: Array[String] = [
+	"Grenn", "Rask", "Drokk", "Char", "Brekk", "Vurr", "Kex", "Thull",
+	"Mordak", "Skarn", "Tork", "Grunn", "Harsk", "Zull", "Brenn", "Dakk",
+	"Vorsk", "Gharn", "Rekk", "Sturm", "Bolg", "Krath", "Fenn", "Rull",
+	"Skoll", "Denn", "Vrax", "Torr", "Grist", "Krull",
+]
+
+const CREW_NAME_POOLS: Dictionary = {
+	"HUMAN": HUMAN_NAMES,
+	"GORVIAN": GORVIAN_NAMES,
+	"VELLANI": VELLANI_NAMES,
+	"KRELLVANI": KRELLVANI_NAMES,
+}
+
+# === PERSONALITY GENERATORS ===
+
+const TEMPERAMENT_WORDS: Array[String] = [
+	"Meticulous", "Reckless", "Calm", "Ambitious", "Quiet",
+	"Methodical", "Impulsive", "Stoic", "Cheerful", "Brooding",
+	"Sharp-tongued", "Patient", "Intense", "Easygoing", "Cautious",
+	"Stubborn", "Perceptive",
+]
+
+const TRAIT_PHRASES: Array[String] = [
+	"dislikes chaos", "restless temperament", "fiercely loyal",
+	"easily bored", "natural problem-solver", "keeps to themselves",
+	"always volunteering", "uncomfortable with authority",
+	"surprisingly gentle", "competitive streak", "dry humor",
+	"thrives under pressure", "needs routine", "respects strength",
+	"curious about everything", "distrustful of strangers",
+	"quick to forgive",
+]
+
+# === RECRUITMENT TEXT ===
+
+const RECRUIT_ACCEPT_TEXT: Array[String] = [
+	"{name} looks over the terms and nods. 'When do I start, Captain?' Welcome aboard.",
+	"{name} extends a hand. 'You've got yourself a crew member.' Welcome aboard.",
+	"'Fair enough,' says {name}. 'I've served on worse ships.' They're in.",
+	"{name} grins. 'I was hoping you'd ask.' Welcome aboard, {role}.",
+]
+
+const RECRUIT_RELUCTANT_TEXT: Array[String] = [
+	"{name} glances at the split and frowns. They'll take the job but they're not thrilled about it.",
+	"'Could be better,' {name} mutters, but signs the contract anyway. Not the happiest start.",
+	"{name} hesitates, then shrugs. 'I suppose it beats sitting on this dock.' Joins with reservations.",
+]
+
+const RECRUIT_DECLINE_TEXT: Array[String] = [
+	"They glance at your ship and politely pass. 'Not the right fit, Captain. No offense.'",
+	"{name} shakes their head. 'I'll wait for a better offer.' They stay on the dock.",
+	"'Appreciate the interest,' {name} says, 'but I'm looking for something different.'",
+]
+
+const RECRUIT_DISMISS_TEXT: Array[String] = [
+	"{name} gathers their belongings and walks off the ship without looking back.",
+	"{name} salutes once and heads down the gangway. The crew watches them go.",
+	"Without a word, {name} collects their kit and disappears into the station crowd.",
+]
+
+
 # === MISSION TEXT ===
+
+# === SHIPYARD TEXT ===
+
+const SHIP_PURCHASE_TEXT: Dictionary = {
+	"corvette": [
+		"The Corvette's engines thrum with barely contained power. She's yours now, Captain.",
+		"You sign the transfer docs. The Corvette sits in the bay, gleaming and ready. A real ship at last.",
+		"The yard boss hands you the access codes. Your new Corvette has room for crew. Time to grow.",
+	],
+	"frigate": [
+		"A Frigate. Twelve crew berths, heavy hull, deep cargo holds. This is a serious vessel.",
+		"The Frigate dwarfs everything else in the bay. Your old ship looks like a toy beside her.",
+		"The transfer is complete. You stand on the bridge of your Frigate and the sector feels smaller.",
+	],
+}
+
 
 const MISSION_TYPE_DISPLAY: Dictionary = {
 	"cargo_delivery": "Cargo Delivery",
@@ -194,6 +297,56 @@ const MISSION_ROLES: Dictionary = {
 	"escort": ["Gunner", "Navigator"],
 	"patrol": ["Security Chief", "Gunner"],
 	"distress_signal": ["Medic", "Engineer", "Security Chief"],
+}
+
+# === LEVEL-UP TEXT ===
+
+const LEVEL_UP_TEXT: Dictionary = {
+	2: [
+		"You're learning the ropes. The void feels less foreign now.",
+		"Your instincts are sharpening. Level 2 — still a long way to go.",
+		"A few runs under your belt. You're starting to think like a captain.",
+	],
+	3: [
+		"Experience is the best teacher, and you've been paying attention. Level 3.",
+		"Your reflexes are quicker, your decisions more confident. Growing into this.",
+		"Dockworkers are starting to recognize your ship. You're building a name.",
+	],
+	4: [
+		"Level 4. You've earned enough respect to command a bigger ship.",
+		"The Corvette-class is within reach now. Time to think bigger.",
+		"Your skills have outgrown the Skiff. The stars are opening up.",
+	],
+	5: [
+		"Halfway to legend. Level 5. The sector is starting to know your name.",
+		"Seasoned captain. The dangerous routes don't scare you like they used to.",
+		"Level 5. Veteran captains nod when you pass. You've earned it.",
+	],
+	6: [
+		"Level 6. Fewer and fewer captains have made it this far.",
+		"You read jump corridors like poetry now. Instinct and experience fused together.",
+		"Level 6 — the missions that once seemed impossible are routine now.",
+	],
+	7: [
+		"Level 7. The Frigate-class beckons. Ready for a real crew?",
+		"Seven levels deep and still flying. That's more than most can say.",
+		"A Frigate could be yours now. The sector's toughest runs await.",
+	],
+	8: [
+		"Level 8. There aren't many captains left who can match your record.",
+		"Your name carries weight now. Factions pay attention when you dock.",
+		"Elite territory. Level 8. The void has tested you and found you worthy.",
+	],
+	9: [
+		"Level 9. One step from the top. Legends are written about captains like you.",
+		"Near the peak. Your ship, your crew, your instincts — honed to perfection.",
+		"Level 9. The most dangerous missions in the sector are yours for the taking.",
+	],
+	10: [
+		"Level 10 — MAXIMUM. You are the standard by which all captains are measured.",
+		"The pinnacle. Level 10. There is nothing left to prove. Only legacy to build.",
+		"Maximum level achieved. You are a legend of the Gravity Nexus.",
+	],
 }
 
 const MISSION_OUTCOME_TEXT: Dictionary = {
@@ -268,3 +421,56 @@ static func get_difficulty_flavor(difficulty: int) -> String:
 
 static func get_mission_type_display(mission_type: String) -> String:
 	return MISSION_TYPE_DISPLAY.get(mission_type, mission_type.capitalize())
+
+
+static func get_ship_purchase_text(ship_class: String) -> String:
+	if SHIP_PURCHASE_TEXT.has(ship_class):
+		var variants: Array = SHIP_PURCHASE_TEXT[ship_class]
+		return variants[randi() % variants.size()]
+	return "Your new %s is ready." % ship_class.capitalize()
+
+
+static func get_level_up_text(level: int) -> String:
+	if LEVEL_UP_TEXT.has(level):
+		var variants: Array = LEVEL_UP_TEXT[level]
+		return variants[randi() % variants.size()]
+	return "You've reached level %d." % level
+
+
+static func get_crew_name(species_key: String) -> String:
+	## Returns a random name from the species name pool.
+	if CREW_NAME_POOLS.has(species_key):
+		var pool: Array = CREW_NAME_POOLS[species_key]
+		return pool[randi() % pool.size()]
+	return HUMAN_NAMES[randi() % HUMAN_NAMES.size()]
+
+
+static func generate_personality() -> String:
+	## Returns a random personality descriptor combining temperament + trait.
+	var temp: String = TEMPERAMENT_WORDS[randi() % TEMPERAMENT_WORDS.size()]
+	var trait_phrase: String = TRAIT_PHRASES[randi() % TRAIT_PHRASES.size()]
+	return "%s, %s." % [temp, trait_phrase]
+
+
+static func get_recruit_accept_text(crew_name: String, role_name: String) -> String:
+	var variants: Array = RECRUIT_ACCEPT_TEXT
+	var text: String = variants[randi() % variants.size()]
+	return text.replace("{name}", crew_name).replace("{role}", role_name)
+
+
+static func get_recruit_reluctant_text(crew_name: String) -> String:
+	var variants: Array = RECRUIT_RELUCTANT_TEXT
+	var text: String = variants[randi() % variants.size()]
+	return text.replace("{name}", crew_name)
+
+
+static func get_recruit_decline_text(crew_name: String) -> String:
+	var variants: Array = RECRUIT_DECLINE_TEXT
+	var text: String = variants[randi() % variants.size()]
+	return text.replace("{name}", crew_name)
+
+
+static func get_dismiss_text(crew_name: String) -> String:
+	var variants: Array = RECRUIT_DISMISS_TEXT
+	var text: String = variants[randi() % variants.size()]
+	return text.replace("{name}", crew_name)

@@ -3,7 +3,7 @@ extends Control
 ## Left panel: planet visual, player info, ship info.
 ## Right panel: service buttons (or shop/mission board sub-panels), message log.
 
-enum PanelMode { SERVICES, SHOP, MISSION_BOARD }
+enum PanelMode { SERVICES, SHOP, MISSION_BOARD, SHIPYARD, RECRUITMENT, SHIP_VIEW }
 var current_panel: PanelMode = PanelMode.SERVICES
 
 # === NODE REFERENCES — LEFT PANEL ===
@@ -30,6 +30,7 @@ var current_panel: PanelMode = PanelMode.SERVICES
 @onready var service_container: VBoxContainer = $HSplit/RightPanel/Margin/RightVBox/ServiceContainer
 @onready var message_log: RichTextLabel = $HSplit/RightPanel/Margin/RightVBox/MessageLog
 @onready var day_label: Label = $HSplit/RightPanel/Margin/RightVBox/BottomBar/DayLabel
+@onready var ship_button: Button = $HSplit/RightPanel/Margin/RightVBox/BottomBar/ShipButton
 @onready var save_button: Button = $HSplit/RightPanel/Margin/RightVBox/BottomBar/SaveButton
 @onready var menu_button: Button = $HSplit/RightPanel/Margin/RightVBox/BottomBar/MenuButton
 
@@ -46,6 +47,7 @@ const SERVICE_DISPLAY: Dictionary = {
 # === INITIALIZATION ===
 
 func _ready() -> void:
+	ship_button.pressed.connect(_show_ship_view)
 	save_button.pressed.connect(_on_save_pressed)
 	menu_button.pressed.connect(_on_menu_pressed)
 
@@ -54,6 +56,9 @@ func _ready() -> void:
 	EventBus.fuel_changed.connect(func(_c: float, _m: float) -> void: _update_ship_info())
 	EventBus.food_changed.connect(func(_s: float) -> void: _update_ship_info())
 	EventBus.hull_changed.connect(func(_c: int, _m: int) -> void: _update_ship_info())
+	EventBus.level_up.connect(_on_level_up)
+	EventBus.xp_gained.connect(func(_a: int, _t: int) -> void: _update_player_info())
+	EventBus.crew_changed.connect(func() -> void: _update_ship_info())
 
 	_update_planet_display()
 	_update_player_info()
@@ -85,12 +90,16 @@ func _update_planet_display() -> void:
 
 func _update_player_info() -> void:
 	captain_name_label.text = "Cpt. %s" % GameManager.captain_name
-	level_label.text = "Lvl %d" % GameManager.captain_level
 
-	xp_bar.max_value = GameManager.get_xp_for_next_level()
-	xp_bar.value = GameManager.captain_xp
 	if GameManager.captain_level >= GameManager.MAX_LEVEL:
-		xp_bar.value = xp_bar.max_value
+		level_label.text = "Level %d — MAX" % GameManager.captain_level
+		xp_bar.max_value = 1.0
+		xp_bar.value = 1.0
+	else:
+		var next_threshold: int = GameManager.get_xp_for_next_level()
+		level_label.text = "Level %d — %d / %d XP" % [GameManager.captain_level, GameManager.captain_xp, next_threshold]
+		xp_bar.max_value = next_threshold
+		xp_bar.value = GameManager.captain_xp
 
 	credits_label.text = "%d credits" % GameManager.credits
 
@@ -111,7 +120,7 @@ func _update_ship_info() -> void:
 	var total_cargo: int = GameManager.get_total_cargo()
 	cargo_label.text = "Cargo: %d / %d units" % [total_cargo, GameManager.cargo_max]
 	food_label.text = "Food: %s" % GameManager.get_food_days_remaining()
-	crew_label.text = "Crew: 0 / %d" % GameManager.crew_max
+	crew_label.text = "Crew: %d / %d" % [GameManager.get_crew_count(), GameManager.crew_max]
 
 	day_label.text = "Day %d" % GameManager.day_count
 
@@ -161,11 +170,11 @@ func _on_service_pressed(service_key: String) -> void:
 		"shop":
 			_show_shop()
 		"recruitment":
-			_append_log("[color=#718096]Recruitment Station — coming in Phase 2.2.[/color]")
+			_show_recruitment()
 		"hospital":
 			_append_log("[color=#718096]Hospital — coming in Phase 5.3.[/color]")
 		"shipyard":
-			_append_log("[color=#718096]Shipyard — coming in Phase 1.8.[/color]")
+			_show_shipyard()
 		_:
 			_append_log("[color=#718096]%s — not yet implemented.[/color]" % service_key)
 
@@ -196,6 +205,46 @@ func _show_mission_board() -> void:
 	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	service_container.add_child(board)
 	current_panel = PanelMode.MISSION_BOARD
+
+
+func _show_shipyard() -> void:
+	_clear_service_area()
+	service_header.text = "SHIPYARD"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var shipyard: ShipyardView = ShipyardView.new()
+	shipyard.back_pressed.connect(_show_services)
+	shipyard.log_message.connect(_append_log)
+	shipyard.ship_purchased.connect(func() -> void: _update_ship_info(); _update_player_info())
+	shipyard.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(shipyard)
+	current_panel = PanelMode.SHIPYARD
+
+
+func _show_recruitment() -> void:
+	_clear_service_area()
+	service_header.text = "RECRUITMENT STATION"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var recruitment: RecruitmentView = RecruitmentView.new(GameManager.current_planet_id)
+	recruitment.back_pressed.connect(_show_services)
+	recruitment.log_message.connect(_append_log)
+	recruitment.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(recruitment)
+	current_panel = PanelMode.RECRUITMENT
+
+
+func _show_ship_view() -> void:
+	_clear_service_area()
+	service_header.text = "SHIP VIEW"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var ship_view: ShipView = ShipView.new()
+	ship_view.back_pressed.connect(_show_services)
+	ship_view.log_message.connect(_append_log)
+	ship_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(ship_view)
+	current_panel = PanelMode.SHIP_VIEW
 
 
 func _show_services() -> void:
@@ -237,6 +286,20 @@ func _display_mission_result(result: Dictionary) -> void:
 		_append_log("[color=#4A90D9]+%d XP[/color]" % result.xp_reward)
 	if result.hull_damage > 0:
 		_append_log("[color=#C0392B]Hull damage: -%d HP[/color]" % result.hull_damage)
+
+
+# === LEVEL-UP NOTIFICATION ===
+
+func _on_level_up(new_level: int) -> void:
+	_update_player_info()
+	var level_text: String = TextTemplates.get_level_up_text(new_level)
+	_append_log("")
+	_append_log("[color=#E6D159]==============================[/color]")
+	_append_log("[color=#E6D159]  LEVEL UP! Captain is now Level %d[/color]" % new_level)
+	_append_log("[color=#E6D159]  All stats +%d[/color]" % GameManager.STAT_PER_LEVEL)
+	_append_log("[color=#718096]  %s[/color]" % level_text)
+	_append_log("[color=#E6D159]==============================[/color]")
+	_append_log("")
 
 
 func _on_depart_pressed() -> void:

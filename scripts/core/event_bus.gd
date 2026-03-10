@@ -37,6 +37,12 @@ signal ship_purchased(ship_class: String)
 signal hull_changed(current: int, maximum: int)
 signal ship_repaired(amount: int)
 
+# === CREW ===
+signal crew_recruited(crew_id: int, crew_name: String)
+signal crew_dismissed(crew_id: int, crew_name: String)
+signal crew_changed()
+signal pay_split_changed(new_split: float)
+
 # === ENCOUNTERS ===
 signal encounter_started(encounter_type: String)
 signal encounter_resolved(outcome: String)

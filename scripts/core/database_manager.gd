@@ -185,6 +185,44 @@ func _create_tables() -> void:
 		)
 	""")
 
+	# Phase 2 crew tables
+	db.query("""
+		CREATE TABLE IF NOT EXISTS crew_members (
+			id INTEGER PRIMARY KEY,
+			save_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			species TEXT NOT NULL,
+			role TEXT NOT NULL,
+			stamina INTEGER DEFAULT 45,
+			cognition INTEGER DEFAULT 45,
+			reflexes INTEGER DEFAULT 45,
+			social INTEGER DEFAULT 45,
+			resourcefulness INTEGER DEFAULT 45,
+			morale REAL DEFAULT 60.0,
+			fatigue REAL DEFAULT 0.0,
+			loyalty REAL DEFAULT 50.0,
+			is_active INTEGER DEFAULT 1,
+			hired_day INTEGER DEFAULT 1,
+			personality TEXT DEFAULT '',
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (save_id) REFERENCES save_state(id)
+		)
+	""")
+
+	db.query("""
+		CREATE TABLE IF NOT EXISTS crew_relationships (
+			id INTEGER PRIMARY KEY,
+			crew_a_id INTEGER NOT NULL,
+			crew_b_id INTEGER NOT NULL,
+			value REAL DEFAULT 0.0,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (crew_a_id) REFERENCES crew_members(id),
+			FOREIGN KEY (crew_b_id) REFERENCES crew_members(id)
+		)
+	""")
+
 	db.query("""
 		CREATE TABLE IF NOT EXISTS visited_planets (
 			id INTEGER PRIMARY KEY,
@@ -424,6 +462,19 @@ func get_ship_template(ship_class: String) -> Dictionary:
 			return {"class": "skiff", "name": "Skiff", "hull_max": 50, "fuel_max": 30, "cargo_max": 10, "crew_max": 0, "starting_food": 10.0}
 
 
+func create_ship_for_save(save_id: int, ship_class: String) -> void:
+	## Creates a new ship record for the given save.
+	_create_ship(save_id, ship_class)
+
+
+func get_latest_ship_id(save_id: int) -> int:
+	## Returns the id of the most recently created ship for a save.
+	var result: Array = db.select_rows("ships", "save_id = %d" % save_id, ["id"])
+	if result.is_empty():
+		return -1
+	return result.back().id
+
+
 func has_save() -> bool:
 	var result: Array = db.select_rows("save_state", "", ["id"])
 	return not result.is_empty()
@@ -559,7 +610,11 @@ func update_cargo(save_id: int, commodity_id: int, quantity: int) -> void:
 
 func delete_save(save_id: int) -> void:
 	## Deletes a save and all associated data.
-	for table: String in ["cargo", "missions_active", "visited_planets", "ships", "captain_stats"]:
+	# Delete crew relationships first (they reference crew_members)
+	var crew_ids: Array = db.select_rows("crew_members", "save_id = %d" % save_id, ["id"])
+	for crew: Dictionary in crew_ids:
+		db.query_with_bindings("DELETE FROM crew_relationships WHERE crew_a_id = ? OR crew_b_id = ?", [crew.id, crew.id])
+	for table: String in ["crew_members", "cargo", "missions_active", "visited_planets", "ships", "captain_stats"]:
 		db.query_with_bindings("DELETE FROM %s WHERE save_id = ?" % table, [save_id])
 	db.query_with_bindings("DELETE FROM save_state WHERE id = ?", [save_id])
 
@@ -609,8 +664,18 @@ func get_all_routes() -> Array:
 
 func _migrate_schema() -> void:
 	## Adds columns that may be missing from older databases.
-	db.query("ALTER TABLE missions_available ADD COLUMN roles_tested TEXT DEFAULT '[]'")
-	db.query("ALTER TABLE missions_active ADD COLUMN roles_tested TEXT DEFAULT '[]'")
+	## Uses PRAGMA table_info to check before altering, since SQLite
+	## does not support ALTER TABLE ADD COLUMN IF NOT EXISTS.
+	_add_column_if_missing("missions_available", "roles_tested", "TEXT DEFAULT '[]'")
+	_add_column_if_missing("missions_active", "roles_tested", "TEXT DEFAULT '[]'")
+
+
+func _add_column_if_missing(table_name: String, column_name: String, column_def: String) -> void:
+	var columns: Array = db.select_rows("pragma_table_info('%s')" % table_name, "", ["name"])
+	for col: Dictionary in columns:
+		if col.name == column_name:
+			return
+	db.query("ALTER TABLE %s ADD COLUMN %s %s" % [table_name, column_name, column_def])
 
 
 # === GALAXY AVERAGES ===
@@ -704,3 +769,99 @@ func remove_active_mission(mission_id: int) -> void:
 
 func remove_mission_available(mission_id: int) -> void:
 	db.query_with_bindings("DELETE FROM missions_available WHERE id = ?", [mission_id])
+
+
+# === CREW OPERATIONS ===
+
+func insert_crew_member(save_id: int, data: Dictionary) -> int:
+	## Inserts a new crew member and returns the new id.
+	db.query_with_bindings(
+		"INSERT INTO crew_members (save_id, name, species, role, stamina, cognition, reflexes, social, resourcefulness, morale, fatigue, loyalty, is_active, hired_day, personality) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[save_id, data.name, data.species, data.role, data.stamina, data.cognition,
+		 data.reflexes, data.social, data.resourcefulness,
+		 data.get("morale", 60.0), data.get("fatigue", 0.0), data.get("loyalty", 50.0),
+		 data.get("is_active", 1), data.get("hired_day", 1), data.get("personality", "")]
+	)
+	var result: Array = db.select_rows("crew_members", "save_id = %d" % save_id, ["id"])
+	if result.is_empty():
+		return -1
+	return result.back().id
+
+
+func get_active_crew(save_id: int) -> Array:
+	## Returns all active crew members for a save.
+	return db.select_rows("crew_members", "save_id = %d AND is_active = 1" % save_id, ["*"])
+
+
+func get_crew_member(crew_id: int) -> Dictionary:
+	var result: Array = db.select_rows("crew_members", "id = %d" % crew_id, ["*"])
+	if result.is_empty():
+		return {}
+	return result[0]
+
+
+func get_active_crew_count(save_id: int) -> int:
+	var rows: Array = db.select_rows("crew_members", "save_id = %d AND is_active = 1" % save_id, ["id"])
+	return rows.size()
+
+
+func deactivate_crew_member(crew_id: int) -> void:
+	## Sets is_active = 0 (dismissed but kept for history).
+	db.query_with_bindings(
+		"UPDATE crew_members SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		[crew_id]
+	)
+
+
+func update_crew_member(crew_id: int, data: Dictionary) -> void:
+	var sets: PackedStringArray = []
+	var values: Array = []
+	for key: String in data:
+		sets.append("%s = ?" % key)
+		values.append(data[key])
+	values.append(crew_id)
+	db.query_with_bindings(
+		"UPDATE crew_members SET %s, updated_at = CURRENT_TIMESTAMP WHERE id = ?" % ", ".join(sets),
+		values
+	)
+
+
+# === CREW RELATIONSHIPS ===
+
+func insert_crew_relationship(crew_a_id: int, crew_b_id: int, value: float) -> void:
+	## Always store with lower id as crew_a_id.
+	var a: int = mini(crew_a_id, crew_b_id)
+	var b: int = maxi(crew_a_id, crew_b_id)
+	db.query_with_bindings(
+		"INSERT INTO crew_relationships (crew_a_id, crew_b_id, value) VALUES (?, ?, ?)",
+		[a, b, value]
+	)
+
+
+func get_crew_relationships(crew_id: int) -> Array:
+	## Returns all relationships involving this crew member.
+	var from_a: Array = db.select_rows("crew_relationships", "crew_a_id = %d" % crew_id, ["*"])
+	var from_b: Array = db.select_rows("crew_relationships", "crew_b_id = %d" % crew_id, ["*"])
+	var all: Array = []
+	all.append_array(from_a)
+	all.append_array(from_b)
+	return all
+
+
+func get_relationship_value(crew_a_id: int, crew_b_id: int) -> float:
+	## Returns the relationship value between two crew members.
+	var a: int = mini(crew_a_id, crew_b_id)
+	var b: int = maxi(crew_a_id, crew_b_id)
+	var result: Array = db.select_rows(
+		"crew_relationships",
+		"crew_a_id = %d AND crew_b_id = %d" % [a, b],
+		["value"]
+	)
+	if result.is_empty():
+		return 0.0
+	return result[0].value
+
+
+func delete_crew_relationships(crew_id: int) -> void:
+	## Removes all relationship rows involving this crew member.
+	db.query_with_bindings("DELETE FROM crew_relationships WHERE crew_a_id = ? OR crew_b_id = ?", [crew_id, crew_id])
