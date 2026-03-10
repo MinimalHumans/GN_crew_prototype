@@ -15,6 +15,7 @@ func _ready() -> void:
 	db.path = DB_PATH
 	db.open_db()
 	_create_tables()
+	_migrate_schema()
 
 
 func _notification(what: int) -> void:
@@ -156,6 +157,7 @@ func _create_tables() -> void:
 			title TEXT DEFAULT '',
 			description TEXT DEFAULT '',
 			complications TEXT DEFAULT '[]',
+			roles_tested TEXT DEFAULT '[]',
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (planet_id) REFERENCES planets(id),
@@ -174,6 +176,7 @@ func _create_tables() -> void:
 			title TEXT DEFAULT '',
 			description TEXT DEFAULT '',
 			complications TEXT DEFAULT '[]',
+			roles_tested TEXT DEFAULT '[]',
 			progress TEXT DEFAULT 'accepted',
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -405,20 +408,20 @@ func _create_ship(save_id: int, ship_class: String) -> void:
 	db.query_with_bindings(
 		"INSERT INTO ships (save_id, class, name, hull_current, hull_max, fuel_current, fuel_max, cargo_max, crew_max, food_supply) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		[save_id, ship_data["class"], ship_data.name, ship_data.hull_max, ship_data.hull_max,
-		 ship_data.fuel_max, ship_data.fuel_max, ship_data.cargo_max, ship_data.crew_max, 0.0]
+		 ship_data.fuel_max, ship_data.fuel_max, ship_data.cargo_max, ship_data.crew_max, ship_data.starting_food]
 	)
 
 
 func get_ship_template(ship_class: String) -> Dictionary:
 	match ship_class:
 		"skiff":
-			return {"class": "skiff", "name": "Skiff", "hull_max": 50, "fuel_max": 30, "cargo_max": 10, "crew_max": 0}
+			return {"class": "skiff", "name": "Skiff", "hull_max": 50, "fuel_max": 30, "cargo_max": 10, "crew_max": 0, "starting_food": 10.0}
 		"corvette":
-			return {"class": "corvette", "name": "Corvette", "hull_max": 120, "fuel_max": 60, "cargo_max": 25, "crew_max": 3}
+			return {"class": "corvette", "name": "Corvette", "hull_max": 120, "fuel_max": 60, "cargo_max": 25, "crew_max": 3, "starting_food": 20.0}
 		"frigate":
-			return {"class": "frigate", "name": "Frigate", "hull_max": 250, "fuel_max": 100, "cargo_max": 50, "crew_max": 12}
+			return {"class": "frigate", "name": "Frigate", "hull_max": 250, "fuel_max": 100, "cargo_max": 50, "crew_max": 12, "starting_food": 40.0}
 		_:
-			return {"class": "skiff", "name": "Skiff", "hull_max": 50, "fuel_max": 30, "cargo_max": 10, "crew_max": 0}
+			return {"class": "skiff", "name": "Skiff", "hull_max": 50, "fuel_max": 30, "cargo_max": 10, "crew_max": 0, "starting_food": 10.0}
 
 
 func has_save() -> bool:
@@ -600,3 +603,104 @@ func get_total_cargo(save_id: int) -> int:
 
 func get_all_routes() -> Array:
 	return db.select_rows("routes", "", ["*"])
+
+
+# === SCHEMA MIGRATION ===
+
+func _migrate_schema() -> void:
+	## Adds columns that may be missing from older databases.
+	db.query("ALTER TABLE missions_available ADD COLUMN roles_tested TEXT DEFAULT '[]'")
+	db.query("ALTER TABLE missions_active ADD COLUMN roles_tested TEXT DEFAULT '[]'")
+
+
+# === GALAXY AVERAGES ===
+
+func get_galaxy_averages() -> Dictionary:
+	## Returns {commodity_id: {"avg_buy": float, "avg_sell": float}} averaged across all planets.
+	var all_prices: Array = db.select_rows("planet_prices", "", ["*"])
+	var sums: Dictionary = {}  # {commodity_id: {"buy_sum": int, "sell_sum": int, "count": int}}
+	for row: Dictionary in all_prices:
+		var cid: int = row.commodity_id
+		if not sums.has(cid):
+			sums[cid] = {"buy_sum": 0, "sell_sum": 0, "count": 0}
+		sums[cid].buy_sum += row.current_buy
+		sums[cid].sell_sum += row.current_sell
+		sums[cid].count += 1
+	var averages: Dictionary = {}
+	for cid: int in sums:
+		var s: Dictionary = sums[cid]
+		averages[cid] = {
+			"avg_buy": float(s.buy_sum) / float(s.count),
+			"avg_sell": float(s.sell_sum) / float(s.count),
+		}
+	return averages
+
+
+func get_cargo_quantity(save_id: int, commodity_id: int) -> int:
+	## Returns the quantity of a specific commodity in cargo.
+	var rows: Array = db.select_rows(
+		"cargo",
+		"save_id = %d AND commodity_id = %d" % [save_id, commodity_id],
+		["quantity"]
+	)
+	if rows.is_empty():
+		return 0
+	return rows[0].quantity
+
+
+# === MISSION OPERATIONS ===
+
+func get_missions_available(planet_id: int) -> Array:
+	return db.select_rows("missions_available", "planet_id = %d" % planet_id, ["*"])
+
+
+func clear_missions_available(planet_id: int) -> void:
+	db.query_with_bindings("DELETE FROM missions_available WHERE planet_id = ?", [planet_id])
+
+
+func insert_mission_available(data: Dictionary) -> void:
+	db.query_with_bindings(
+		"INSERT INTO missions_available (planet_id, type, destination_id, difficulty, reward, title, description, complications, roles_tested) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[data.planet_id, data.type, data.destination_id, data.difficulty, data.reward,
+		 data.title, data.description, data.complications, data.roles_tested]
+	)
+
+
+func get_missions_active(save_id: int) -> Array:
+	return db.select_rows("missions_active", "save_id = %d" % save_id, ["*"])
+
+
+func get_active_mission_count(save_id: int) -> int:
+	var rows: Array = db.select_rows("missions_active", "save_id = %d" % save_id, ["id"])
+	return rows.size()
+
+
+func accept_mission(save_id: int, mission_data: Dictionary) -> int:
+	## Inserts a mission into missions_active. Returns the new id.
+	db.query_with_bindings(
+		"INSERT INTO missions_active (save_id, mission_type, destination_id, difficulty, reward, title, description, complications, roles_tested) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[save_id, mission_data.type, mission_data.destination_id, mission_data.difficulty,
+		 mission_data.reward, mission_data.title, mission_data.description,
+		 mission_data.get("complications", "[]"), mission_data.get("roles_tested", "[]")]
+	)
+	var result: Array = db.select_rows("missions_active", "save_id = %d" % save_id, ["id"])
+	if result.is_empty():
+		return -1
+	return result.back().id
+
+
+func get_missions_at_destination(save_id: int, planet_id: int) -> Array:
+	## Returns active missions whose destination matches the given planet.
+	return db.select_rows(
+		"missions_active",
+		"save_id = %d AND destination_id = %d" % [save_id, planet_id],
+		["*"]
+	)
+
+
+func remove_active_mission(mission_id: int) -> void:
+	db.query_with_bindings("DELETE FROM missions_active WHERE id = ?", [mission_id])
+
+
+func remove_mission_available(mission_id: int) -> void:
+	db.query_with_bindings("DELETE FROM missions_available WHERE id = ?", [mission_id])

@@ -1,7 +1,10 @@
 extends Control
 ## Planet View — Primary hub screen.
 ## Left panel: planet visual, player info, ship info.
-## Right panel: service buttons, message log.
+## Right panel: service buttons (or shop/mission board sub-panels), message log.
+
+enum PanelMode { SERVICES, SHOP, MISSION_BOARD }
+var current_panel: PanelMode = PanelMode.SERVICES
 
 # === NODE REFERENCES — LEFT PANEL ===
 @onready var planet_rect: ColorRect = $HSplit/LeftPanel/Margin/LeftVBox/PlanetSection/PlanetRect
@@ -23,6 +26,7 @@ extends Control
 @onready var crew_label: Label = $HSplit/LeftPanel/Margin/LeftVBox/ShipSection/CrewLabel
 
 # === NODE REFERENCES — RIGHT PANEL ===
+@onready var service_header: Label = $HSplit/RightPanel/Margin/RightVBox/ServiceHeader
 @onready var service_container: VBoxContainer = $HSplit/RightPanel/Margin/RightVBox/ServiceContainer
 @onready var message_log: RichTextLabel = $HSplit/RightPanel/Margin/RightVBox/MessageLog
 @onready var day_label: Label = $HSplit/RightPanel/Margin/RightVBox/BottomBar/DayLabel
@@ -56,6 +60,7 @@ func _ready() -> void:
 	_update_ship_info()
 	_build_service_buttons()
 	_log_arrival()
+	_check_mission_completions()
 
 
 # === PLANET DISPLAY ===
@@ -152,9 +157,9 @@ func _build_service_buttons() -> void:
 func _on_service_pressed(service_key: String) -> void:
 	match service_key:
 		"mission_board":
-			_append_log("[color=#718096]Mission Board — coming in Phase 1.6.[/color]")
+			_show_mission_board()
 		"shop":
-			_append_log("[color=#718096]Shop — coming in Phase 1.5.[/color]")
+			_show_shop()
 		"recruitment":
 			_append_log("[color=#718096]Recruitment Station — coming in Phase 2.2.[/color]")
 		"hospital":
@@ -165,7 +170,78 @@ func _on_service_pressed(service_key: String) -> void:
 			_append_log("[color=#718096]%s — not yet implemented.[/color]" % service_key)
 
 
+# === PANEL SWITCHING ===
+
+func _show_shop() -> void:
+	_clear_service_area()
+	service_header.text = "SHOP"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var shop: ShopView = ShopView.new(GameManager.current_planet_id)
+	shop.back_pressed.connect(_show_services)
+	shop.log_message.connect(_append_log)
+	shop.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(shop)
+	current_panel = PanelMode.SHOP
+
+
+func _show_mission_board() -> void:
+	_clear_service_area()
+	service_header.text = "MISSION BOARD"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var board: MissionBoardView = MissionBoardView.new(GameManager.current_planet_id)
+	board.back_pressed.connect(_show_services)
+	board.log_message.connect(_append_log)
+	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(board)
+	current_panel = PanelMode.MISSION_BOARD
+
+
+func _show_services() -> void:
+	_clear_service_area()
+	service_header.text = "SERVICES"
+	service_container.size_flags_vertical = 0
+	service_container.size_flags_stretch_ratio = 1.0
+	_build_service_buttons()
+	current_panel = PanelMode.SERVICES
+
+
+func _clear_service_area() -> void:
+	for child: Node in service_container.get_children():
+		child.queue_free()
+
+
+# === MISSION COMPLETION ON ARRIVAL ===
+
+func _check_mission_completions() -> void:
+	var results: Array[Dictionary] = GameManager.complete_missions_at_planet(GameManager.current_planet_id)
+	for result: Dictionary in results:
+		_display_mission_result(result)
+	if not results.is_empty():
+		_update_player_info()
+		_update_ship_info()
+
+
+func _display_mission_result(result: Dictionary) -> void:
+	var mission: Dictionary = result.mission
+	var outcome_text: String = TextTemplates.get_mission_outcome_text(result.outcome_tier)
+
+	_append_log("")
+	_append_log("[color=#4A90D9]--- Mission Complete: %s ---[/color]" % mission.title)
+	_append_log(outcome_text)
+
+	if result.credit_reward > 0:
+		_append_log("[color=#27AE60]+%d credits[/color]" % result.credit_reward)
+	if result.xp_reward > 0:
+		_append_log("[color=#4A90D9]+%d XP[/color]" % result.xp_reward)
+	if result.hull_damage > 0:
+		_append_log("[color=#C0392B]Hull damage: -%d HP[/color]" % result.hull_damage)
+
+
 func _on_depart_pressed() -> void:
+	# Clear available missions so they regenerate on next visit
+	DatabaseManager.clear_missions_available(GameManager.current_planet_id)
 	GameManager.save_game()
 	GameManager.change_scene("res://scenes/travel/node_map.tscn")
 

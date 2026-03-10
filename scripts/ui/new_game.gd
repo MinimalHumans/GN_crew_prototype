@@ -136,5 +136,6 @@ func _override_starting_ship(target_class: String) -> void:
 		"fuel_max": template.fuel_max,
 		"cargo_max": template.cargo_max,
 		"crew_max": template.crew_max,
+		"food_supply": template.starting_food,
 	})
 	GameManager._refresh_ship_state()

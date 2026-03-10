@@ -137,16 +137,24 @@ func _show_confirm_panel(planet_id: int) -> void:
 	]
 	# RichTextLabel would be needed for color in confirm_info, but for simplicity
 	# we'll use plain text with the danger level
-	confirm_info.text = "%d jumps  |  Danger: %s  |  Fuel cost: %.0f" % [jumps, danger_display, fuel_cost]
+	confirm_info.text = "%d jumps  |  Danger: %s  |  Fuel: %.0f  |  Food: %.0f" % [jumps, danger_display, fuel_cost, jumps * GameManager.get_food_cost_per_jump()]
 
 	# Check fuel
+	var food_cost: float = jumps * GameManager.get_food_cost_per_jump()
 	if GameManager.fuel_current < fuel_cost:
 		confirm_warning.text = "WARNING: Not enough fuel! Need %.0f, have %.0f." % [fuel_cost, GameManager.fuel_current]
 		confirm_warning.add_theme_color_override("font_color", Color(0.75, 0.22, 0.17))
 		confirm_warning.visible = true
 		proceed_button.disabled = true
+	elif GameManager.food_supply < food_cost and food_cost > 0:
+		confirm_warning.text = "WARNING: Low food! Need %.0f for trip, have %.0f." % [food_cost, GameManager.food_supply]
+		confirm_warning.add_theme_color_override("font_color", Color(0.9, 0.49, 0.13))
+		confirm_warning.visible = true
+		proceed_button.disabled = false  # Allow travel on low food, just warn
 	else:
-		confirm_warning.text = "Fuel remaining after travel: %.0f" % (GameManager.fuel_current - fuel_cost)
+		var remaining_fuel: String = "Fuel after: %.0f" % (GameManager.fuel_current - fuel_cost)
+		var remaining_food: String = "Food after: %.0f" % (GameManager.food_supply - food_cost)
+		confirm_warning.text = "%s  |  %s" % [remaining_fuel, remaining_food]
 		confirm_warning.add_theme_color_override("font_color", Color(0.443, 0.502, 0.588))
 		confirm_warning.visible = true
 		proceed_button.disabled = false

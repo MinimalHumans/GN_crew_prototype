@@ -22,8 +22,14 @@ const FUEL_PER_JUMP_SKIFF: float = 3.0
 const FUEL_PER_JUMP_CORVETTE: float = 5.0
 const FUEL_PER_JUMP_FRIGATE: float = 8.0
 
-# Food consumption per crew member per jump (solo captain eats nothing for Phase 1)
+# Food consumption per jump — captain always eats 1 unit
+const FOOD_PER_CAPTAIN_PER_JUMP: float = 1.0
 const FOOD_PER_CREW_PER_JUMP: float = 1.0
+
+# Mission constants
+const MAX_ACTIVE_MISSIONS: int = 3
+const DIFFICULTY_SCALE_BASE: int = 40
+const DIFFICULTY_SCALE_PER_STAR: int = 15
 
 # Encounter probability by danger level (per jump)
 const ENCOUNTER_CHANCE_LOW: float = 0.10
@@ -261,10 +267,9 @@ func get_fuel_cost_per_jump() -> float:
 
 
 func get_food_cost_per_jump() -> float:
-	## Returns food consumed per jump based on crew count.
-	## Solo play (crew_max 0) = 0 food cost. Ready for Phase 2.
-	# TODO: In Phase 2, count actual crew aboard and apply species modifiers.
-	return 0.0 * FOOD_PER_CREW_PER_JUMP
+	## Returns food consumed per jump. Captain always eats 1 unit.
+	## In Phase 2, crew will add to this cost.
+	return FOOD_PER_CAPTAIN_PER_JUMP
 
 
 func get_encounter_chance(danger_level: String) -> float:
@@ -393,16 +398,11 @@ func get_total_cargo() -> int:
 
 func get_food_days_remaining() -> String:
 	## Returns a display string for food supply.
-	## In solo play, food doesn't deplete, so show "N/A".
-	if crew_max == 0:
-		if food_supply > 0:
-			return "%.0f units" % food_supply
-		return "N/A (solo)"
-	var daily_rate: float = get_food_cost_per_jump()
-	if daily_rate <= 0:
+	var rate: float = get_food_cost_per_jump()
+	if rate <= 0:
 		return "%.0f units" % food_supply
-	var days: float = food_supply / daily_rate
-	return "%.0f days" % days
+	var jumps: int = int(food_supply / rate)
+	return "%.0f units (~%d jumps)" % [food_supply, jumps]
 
 
 func can_afford_ship(target_class: String) -> bool:
@@ -413,3 +413,190 @@ func can_afford_ship(target_class: String) -> bool:
 			return captain_level >= FRIGATE_UNLOCK_LEVEL and credits >= FRIGATE_PRICE
 		_:
 			return false
+
+
+func get_cargo_space_remaining() -> int:
+	return cargo_max - get_total_cargo()
+
+
+# === TRADE ===
+
+func buy_commodity(commodity_id: int, quantity: int, price_per_unit: int) -> bool:
+	## Buys cargo. Returns false if insufficient credits or cargo space.
+	var total_cost: int = price_per_unit * quantity
+	if credits < total_cost:
+		return false
+	if get_cargo_space_remaining() < quantity:
+		return false
+	spend_credits(total_cost)
+	var current_qty: int = DatabaseManager.get_cargo_quantity(save_id, commodity_id)
+	DatabaseManager.update_cargo(save_id, commodity_id, current_qty + quantity)
+	EventBus.cargo_changed.emit(commodity_id, current_qty + quantity)
+	EventBus.trade_completed.emit(commodity_id, quantity, total_cost, true)
+	return true
+
+
+func sell_commodity(commodity_id: int, quantity: int, price_per_unit: int) -> bool:
+	## Sells cargo. Returns false if insufficient cargo.
+	var current_qty: int = DatabaseManager.get_cargo_quantity(save_id, commodity_id)
+	if current_qty < quantity:
+		return false
+	var revenue: int = price_per_unit * quantity
+	DatabaseManager.update_cargo(save_id, commodity_id, current_qty - quantity)
+	add_credits(revenue)
+	EventBus.cargo_changed.emit(commodity_id, current_qty - quantity)
+	EventBus.trade_completed.emit(commodity_id, quantity, revenue, false)
+	return true
+
+
+# === SUPPLIES ===
+
+func refuel(units: float, cost: int) -> bool:
+	if credits < cost:
+		return false
+	spend_credits(cost)
+	fuel_current = minf(fuel_max, fuel_current + units)
+	DatabaseManager.update_ship(current_ship_id, {"fuel_current": fuel_current})
+	EventBus.fuel_changed.emit(fuel_current, fuel_max)
+	return true
+
+
+func buy_food(units: float, cost: int) -> bool:
+	if credits < cost:
+		return false
+	spend_credits(cost)
+	food_supply += units
+	DatabaseManager.update_ship(current_ship_id, {"food_supply": food_supply})
+	EventBus.food_changed.emit(food_supply)
+	return true
+
+
+func repair_hull(amount: int, cost: int) -> bool:
+	if credits < cost:
+		return false
+	spend_credits(cost)
+	hull_current = mini(hull_max, hull_current + amount)
+	DatabaseManager.update_ship(current_ship_id, {"hull_current": hull_current})
+	EventBus.hull_changed.emit(hull_current, hull_max)
+	return true
+
+
+# === MISSIONS ===
+
+func accept_mission(mission_data: Dictionary) -> bool:
+	## Accepts a mission from the board. Returns false if at max capacity.
+	if DatabaseManager.get_active_mission_count(save_id) >= MAX_ACTIVE_MISSIONS:
+		return false
+	var mission_id: int = DatabaseManager.accept_mission(save_id, mission_data)
+	if mission_id < 0:
+		return false
+	EventBus.mission_accepted.emit(mission_id)
+	return true
+
+
+func get_active_missions() -> Array:
+	return DatabaseManager.get_missions_active(save_id)
+
+
+func complete_missions_at_planet(planet_id: int) -> Array[Dictionary]:
+	## Checks for active missions targeting this planet, resolves them, returns results.
+	var missions: Array = DatabaseManager.get_missions_at_destination(save_id, planet_id)
+	var results: Array[Dictionary] = []
+
+	for mission: Dictionary in missions:
+		var result: Dictionary = _resolve_mission(mission)
+		results.append(result)
+		DatabaseManager.remove_active_mission(mission.id)
+
+	return results
+
+
+func _resolve_mission(mission: Dictionary) -> Dictionary:
+	## Runs the stat check and calculates rewards for a completed mission.
+	var primary_stat: String = TextTemplates.get_mission_primary_stat(mission.mission_type)
+	var stat_value: int = _get_stat(primary_stat)
+	var scaled_difficulty: int = DIFFICULTY_SCALE_BASE + mission.difficulty * DIFFICULTY_SCALE_PER_STAR
+	var outcome: Dictionary = resolve_challenge(stat_value, scaled_difficulty)
+
+	# Calculate rewards based on outcome tier
+	var credit_reward: int = 0
+	var xp_reward: int = 0
+	var hull_damage: int = 0
+	var base_xp: int = 20 * mission.difficulty
+
+	match outcome.tier:
+		"critical_success":
+			credit_reward = mission.reward
+			xp_reward = int(base_xp * 1.5)
+		"success":
+			credit_reward = mission.reward
+			xp_reward = base_xp
+		"marginal_success":
+			credit_reward = int(mission.reward * 0.75)
+			xp_reward = int(base_xp * 0.75)
+			hull_damage = randi_range(5, 10)
+		"failure":
+			credit_reward = int(mission.reward * 0.25)
+			xp_reward = int(base_xp * 0.5)
+			hull_damage = randi_range(8, 15)
+		"critical_failure":
+			credit_reward = 0
+			xp_reward = int(base_xp * 0.25)
+			hull_damage = randi_range(12, 20)
+
+	# Apply rewards
+	if credit_reward > 0:
+		add_credits(credit_reward)
+	if xp_reward > 0:
+		add_xp(xp_reward)
+	if hull_damage > 0:
+		hull_current = maxi(1, hull_current - hull_damage)
+		DatabaseManager.update_ship(current_ship_id, {"hull_current": hull_current})
+		EventBus.hull_changed.emit(hull_current, hull_max)
+
+	EventBus.mission_completed.emit(mission.id, outcome.tier != "critical_failure")
+
+	return {
+		"mission": mission,
+		"outcome_tier": outcome.tier,
+		"roll": outcome.roll,
+		"credit_reward": credit_reward,
+		"xp_reward": xp_reward,
+		"hull_damage": hull_damage,
+	}
+
+
+func resolve_challenge(stat_value: int, difficulty: int) -> Dictionary:
+	## Runs the challenge resolution formula. Returns {tier, roll}.
+	var effective_stat: int = stat_value  # No morale/fatigue modifiers in Phase 1
+	var roll: int = effective_stat + randi_range(0, effective_stat)
+
+	var tier: String
+	if roll > 2 * difficulty:
+		tier = "critical_success"
+	elif roll > difficulty:
+		tier = "success"
+	elif roll > int(0.75 * difficulty):
+		tier = "marginal_success"
+	elif roll > int(0.5 * difficulty):
+		tier = "failure"
+	else:
+		tier = "critical_failure"
+
+	return {"tier": tier, "roll": roll}
+
+
+func _get_stat(stat_name: String) -> int:
+	match stat_name:
+		"stamina":
+			return stamina
+		"cognition":
+			return cognition
+		"reflexes":
+			return reflexes
+		"social":
+			return social
+		"resourcefulness":
+			return resourcefulness
+		_:
+			return resourcefulness

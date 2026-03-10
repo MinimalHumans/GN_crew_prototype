@@ -125,6 +125,106 @@ const PLANET_POSITIONS: Dictionary = {
 }
 
 
+# === MISSION TEXT ===
+
+const MISSION_TYPE_DISPLAY: Dictionary = {
+	"cargo_delivery": "Cargo Delivery",
+	"passenger_transport": "Passenger Transport",
+	"trade_run": "Trade Run",
+	"survey": "Survey",
+	"retrieval": "Retrieval",
+	"escort": "Escort",
+	"patrol": "Patrol",
+	"distress_signal": "Distress Signal",
+}
+
+const MISSION_TYPE_VERB: Dictionary = {
+	"cargo_delivery": "Deliver",
+	"passenger_transport": "Transport passengers to",
+	"trade_run": "Trade run to",
+	"survey": "Survey sector near",
+	"retrieval": "Retrieve cargo from",
+	"escort": "Escort convoy to",
+	"patrol": "Patrol route to",
+	"distress_signal": "Respond to distress signal near",
+}
+
+const MISSION_PAYLOADS: Dictionary = {
+	"cargo_delivery": ["medical supplies", "industrial parts", "food crates", "mining equipment", "electronics", "fuel cells", "agricultural machinery", "research samples"],
+	"passenger_transport": ["diplomats", "researchers", "colonists", "refugees", "merchants", "engineers"],
+	"retrieval": ["salvage", "lost cargo", "data cores", "prototype components", "ancient artifacts", "stranded equipment"],
+}
+
+const DIFFICULTY_FLAVOR: Dictionary = {
+	1: ["Routine run, should be straightforward.", "Simple job. Low risk.", "Easy money if you stay on course."],
+	2: ["Moderate difficulty. Stay alert.", "Could get interesting. Keep your wits about you.", "Not the easiest route, but manageable."],
+	3: ["Challenging assignment. Prepare well.", "High risk, decent pay. Watch yourself out there.", "Seasoned captains only."],
+	4: ["Dangerous mission. Not for the faint-hearted.", "Expect trouble. The pay reflects the risk.", "Veterans recommend against this one."],
+	5: ["Extremely dangerous. Survival not guaranteed.", "Only the desperate or the foolish take this job.", "Near-suicidal difficulty. The reward is enormous."],
+}
+
+const COMPLICATION_DISPLAY: Dictionary = {
+	"pirate_ambush": "Watch for ambushes.",
+	"customs_inspection": "Expect customs delays.",
+	"equipment_failure": "Reports of equipment malfunctions on this route.",
+	"navigation_hazard": "Navigation hazards reported.",
+	"cargo_damage": "Fragile cargo — handle with care.",
+	"hostile_wildlife": "Local wildlife is aggressive.",
+	"communication_blackout": "Comms dead zone along the route.",
+	"fuel_shortage": "Fuel stations limited on this route.",
+}
+
+const MISSION_PRIMARY_STAT: Dictionary = {
+	"cargo_delivery": "cognition",
+	"passenger_transport": "social",
+	"trade_run": "social",
+	"survey": "cognition",
+	"retrieval": "resourcefulness",
+	"escort": "reflexes",
+	"patrol": "stamina",
+	"distress_signal": "resourcefulness",
+}
+
+const MISSION_ROLES: Dictionary = {
+	"cargo_delivery": ["Engineer", "Navigator"],
+	"passenger_transport": ["Medic", "Comms Officer"],
+	"trade_run": ["Comms Officer", "Navigator"],
+	"survey": ["Science Officer", "Navigator"],
+	"retrieval": ["Security Chief", "Engineer"],
+	"escort": ["Gunner", "Navigator"],
+	"patrol": ["Security Chief", "Gunner"],
+	"distress_signal": ["Medic", "Engineer", "Security Chief"],
+}
+
+const MISSION_OUTCOME_TEXT: Dictionary = {
+	"critical_success": [
+		"Outstanding work. The mission was a resounding success.",
+		"Flawless execution. Your reputation grows.",
+		"Couldn't have gone better. The client is thrilled.",
+	],
+	"success": [
+		"Mission complete. Another job well done.",
+		"Solid work. The pay is as promised.",
+		"You've completed the mission successfully.",
+	],
+	"marginal_success": [
+		"The job is done, but it wasn't pretty. Your hull took some hits.",
+		"Scraped through by the skin of your teeth. Could have gone worse.",
+		"Mission complete, barely. You'll need repairs.",
+	],
+	"failure": [
+		"Things went sideways. You salvaged what you could.",
+		"The mission didn't go as planned. Partial payment only.",
+		"A rough outcome. You limped back with little to show for it.",
+	],
+	"critical_failure": [
+		"Disaster. The mission was a complete failure.",
+		"Everything that could go wrong did. You're lucky to be alive.",
+		"Total loss. No payment. Your ship is battered.",
+	],
+}
+
+
 # === HELPER FUNCTIONS ===
 
 static func get_arrival_text(planet_name: String) -> String:
@@ -147,3 +247,24 @@ static func get_faction_color(faction: String) -> Color:
 	if FACTION_COLORS.has(faction):
 		return FACTION_COLORS[faction]
 	return Color(0.443, 0.502, 0.588)
+
+
+static func get_mission_primary_stat(mission_type: String) -> String:
+	return MISSION_PRIMARY_STAT.get(mission_type, "resourcefulness")
+
+
+static func get_mission_outcome_text(tier: String) -> String:
+	if MISSION_OUTCOME_TEXT.has(tier):
+		var variants: Array = MISSION_OUTCOME_TEXT[tier]
+		return variants[randi() % variants.size()]
+	return "Mission resolved."
+
+
+static func get_difficulty_flavor(difficulty: int) -> String:
+	var clamped: int = clampi(difficulty, 1, 5)
+	var variants: Array = DIFFICULTY_FLAVOR[clamped]
+	return variants[randi() % variants.size()]
+
+
+static func get_mission_type_display(mission_type: String) -> String:
+	return MISSION_TYPE_DISPLAY.get(mission_type, mission_type.capitalize())
