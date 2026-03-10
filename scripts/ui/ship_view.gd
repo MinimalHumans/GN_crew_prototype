@@ -72,6 +72,16 @@ func _build_ui() -> void:
 	food_lbl.add_theme_font_size_override("font_size", 11)
 	status_row.add_child(food_lbl)
 
+	# Ship-wide morale indicator (only when crew exists)
+	if GameManager.get_crew_count() > 0:
+		var morale_word: String = GameManager.get_ship_morale_word()
+		var morale_color: String = GameManager.get_ship_morale_color()
+		var morale_lbl: Label = Label.new()
+		morale_lbl.text = "Crew Morale: %s" % morale_word
+		morale_lbl.add_theme_font_size_override("font_size", 11)
+		morale_lbl.add_theme_color_override("font_color", Color(morale_color))
+		status_row.add_child(morale_lbl)
+
 	add_child(status_row)
 	add_child(HSeparator.new())
 
@@ -486,21 +496,21 @@ func _add_relationship_summary(cm: CrewMember) -> void:
 		var rel_lbl: Label = Label.new()
 		var color: String
 		var descriptor: String
-		if value >= 20.0:
+		if value > 50.0:
 			color = COLOR_GOOD
 			descriptor = "Friendly"
-		elif value >= 5.0:
+		elif value > 20.0:
 			color = COLOR_GOOD
-			descriptor = "Positive"
-		elif value <= -20.0:
-			color = COLOR_BAD
-			descriptor = "Hostile"
-		elif value <= -5.0:
-			color = COLOR_BAD
-			descriptor = "Tense"
-		else:
+			descriptor = "Warm"
+		elif value >= -20.0:
 			color = COLOR_MUTED
 			descriptor = "Neutral"
+		elif value >= -50.0:
+			color = COLOR_WARN
+			descriptor = "Tense"
+		else:
+			color = COLOR_BAD
+			descriptor = "Hostile"
 
 		rel_lbl.text = "  %s: %s (%+.0f)" % [other_name, descriptor, value]
 		rel_lbl.add_theme_font_size_override("font_size", 10)

@@ -25,6 +25,8 @@ var loyalty: float = 50.0
 var is_active: bool = true
 var hired_day: int = 1
 var personality: String = ""
+var ticks_since_role_used: int = 0
+var comfort_food_ticks: int = 0
 
 
 # === SPECIES / ROLE DISPLAY ===
@@ -209,6 +211,8 @@ static func from_dict(data: Dictionary) -> CrewMember:
 	cm.is_active = bool(data.get("is_active", 1))
 	cm.hired_day = data.get("hired_day", 1)
 	cm.personality = data.get("personality", "")
+	cm.ticks_since_role_used = data.get("ticks_since_role_used", 0)
+	cm.comfort_food_ticks = data.get("comfort_food_ticks", 0)
 	return cm
 
 
@@ -228,6 +232,8 @@ func to_dict() -> Dictionary:
 		"is_active": 1 if is_active else 0,
 		"hired_day": hired_day,
 		"personality": personality,
+		"ticks_since_role_used": ticks_since_role_used,
+		"comfort_food_ticks": comfort_food_ticks,
 	}
 
 

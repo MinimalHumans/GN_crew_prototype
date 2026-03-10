@@ -43,6 +43,13 @@ signal crew_dismissed(crew_id: int, crew_name: String)
 signal crew_changed()
 signal pay_split_changed(new_split: float)
 
+# === CREW SIMULATION ===
+signal crew_simulation_ticked(tick_results: Dictionary)
+signal background_event_fired(text: String)
+signal nudge_event_fired(text: String)
+signal decision_event_fired(event_data: Dictionary)
+signal decision_event_resolved(event_id: String, choice: int)
+
 # === ENCOUNTERS ===
 signal encounter_started(encounter_type: String)
 signal encounter_resolved(outcome: String)

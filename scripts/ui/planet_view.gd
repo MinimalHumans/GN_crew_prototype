@@ -65,6 +65,7 @@ func _ready() -> void:
 	_update_ship_info()
 	_build_service_buttons()
 	_log_arrival()
+	_process_crew_arrival()
 	_check_mission_completions()
 
 
@@ -319,6 +320,26 @@ func _log_arrival() -> void:
 	var arrival: String = TextTemplates.get_arrival_text(planet.name)
 	_append_log("[color=#4A90D9]%s[/color]" % arrival)
 	_append_log("[color=#718096]%s[/color]" % planet.description)
+
+
+func _process_crew_arrival() -> void:
+	## Runs crew simulation arrival tick — fatigue recovery, comfort food, promise fulfillment.
+	if GameManager.get_crew_count() <= 0:
+		return
+
+	var arrival_events: Array[String] = CrewSimulation.tick_planet_arrival()
+	if arrival_events.is_empty():
+		return
+
+	_append_log("")
+	for event_text: String in arrival_events:
+		_append_log(event_text)
+
+	# Show ship-wide morale summary on arrival
+	var morale_word: String = GameManager.get_ship_morale_word()
+	var morale_color: String = GameManager.get_ship_morale_color()
+	_append_log("[color=%s]Ship morale: %s[/color]" % [morale_color, morale_word])
+	_append_log("")
 
 
 func _append_log(text: String) -> void:

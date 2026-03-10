@@ -78,6 +78,14 @@ var travel_route: Dictionary = {}
 var travel_jumps: int = 0
 var travel_fuel_cost: float = 0.0
 
+# Crew simulation tracking (in-memory, reset each session)
+var recent_events: Array[String] = []  # Rolling window of last 10 event types
+var ticks_since_last_decision: int = 100  # Start high so decisions can fire early
+var nudge_cooldowns: Dictionary = {}  # {nudge_type: ticks_remaining}
+var stowaway_found: bool = false
+var pending_promises: Array[Dictionary] = []  # e.g., {"type": "dock", "ticks_remaining": 3, "crew_id": 5}
+var last_food_planet_id: int = -1
+
 
 # === INITIALIZATION ===
 
@@ -132,6 +140,7 @@ func _load_state_from_db() -> void:
 	current_ship_id = save_data.current_ship_id
 	day_count = save_data.day_count
 	pay_split = save_data.pay_split
+	last_food_planet_id = save_data.get("last_food_planet_id", -1)
 
 	# Load captain stats
 	var stats: Dictionary = DatabaseManager.get_captain_stats(save_id)
@@ -574,7 +583,9 @@ func buy_food(units: float, cost: int) -> bool:
 		return false
 	spend_credits(cost)
 	food_supply += units
+	last_food_planet_id = current_planet_id
 	DatabaseManager.update_ship(current_ship_id, {"food_supply": food_supply})
+	DatabaseManager.update_save_state(save_id, {"last_food_planet_id": last_food_planet_id})
 	EventBus.food_changed.emit(food_supply)
 	return true
 
@@ -824,6 +835,91 @@ func set_pay_split(new_split: float) -> void:
 	pay_split = new_split
 	DatabaseManager.update_save_state(save_id, {"pay_split": pay_split})
 	EventBus.pay_split_changed.emit(pay_split)
+
+
+# === CREW SIMULATION HELPERS ===
+
+func get_ship_morale() -> float:
+	## Returns weighted average of all crew morale. Crisis crew weighted 1.5x.
+	var roster: Array[CrewMember] = get_crew_roster()
+	if roster.is_empty():
+		return 100.0
+	var total_weight: float = 0.0
+	var weighted_sum: float = 0.0
+	for cm: CrewMember in roster:
+		var weight: float = 1.5 if cm.morale < 20.0 else 1.0
+		weighted_sum += cm.morale * weight
+		total_weight += weight
+	return weighted_sum / total_weight
+
+
+func get_ship_morale_word() -> String:
+	## Returns a word descriptor for ship-wide morale.
+	var m: float = get_ship_morale()
+	if m > 80.0:
+		return "Excellent"
+	elif m > 60.0:
+		return "Good"
+	elif m > 40.0:
+		return "Fair"
+	elif m > 20.0:
+		return "Poor"
+	else:
+		return "Critical"
+
+
+func get_ship_morale_color() -> String:
+	## Returns BBCode color for ship morale.
+	var m: float = get_ship_morale()
+	if m > 60.0:
+		return "#27AE60"
+	elif m > 40.0:
+		return "#E67E22"
+	else:
+		return "#C0392B"
+
+
+func record_event(event_type: String) -> void:
+	## Adds an event type to the rolling window (max 10).
+	recent_events.append(event_type)
+	if recent_events.size() > 10:
+		recent_events.pop_front()
+
+
+func get_danger_ratio() -> float:
+	## Returns ratio of dangerous events in the rolling window.
+	if recent_events.is_empty():
+		return 0.0
+	var dangerous: int = 0
+	for event: String in recent_events:
+		if event in ["combat", "critical_failure", "hull_damage", "pirate_attack", "failure"]:
+			dangerous += 1
+	return float(dangerous) / float(recent_events.size())
+
+
+func tick_nudge_cooldowns() -> void:
+	## Decrements all nudge cooldowns by 1.
+	var to_remove: Array[String] = []
+	for key: String in nudge_cooldowns:
+		nudge_cooldowns[key] -= 1
+		if nudge_cooldowns[key] <= 0:
+			to_remove.append(key)
+	for key: String in to_remove:
+		nudge_cooldowns.erase(key)
+
+
+func tick_promises() -> Array[Dictionary]:
+	## Decrements promise timers. Returns expired promises.
+	var expired: Array[Dictionary] = []
+	var remaining: Array[Dictionary] = []
+	for promise: Dictionary in pending_promises:
+		promise.ticks_remaining -= 1
+		if promise.ticks_remaining <= 0:
+			expired.append(promise)
+		else:
+			remaining.append(promise)
+	pending_promises = remaining
+	return expired
 
 
 func _get_stat(stat_name: String) -> int:

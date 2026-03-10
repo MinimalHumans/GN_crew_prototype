@@ -668,6 +668,10 @@ func _migrate_schema() -> void:
 	## does not support ALTER TABLE ADD COLUMN IF NOT EXISTS.
 	_add_column_if_missing("missions_available", "roles_tested", "TEXT DEFAULT '[]'")
 	_add_column_if_missing("missions_active", "roles_tested", "TEXT DEFAULT '[]'")
+	# Phase 2.4 crew simulation tracking
+	_add_column_if_missing("crew_members", "ticks_since_role_used", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "comfort_food_ticks", "INTEGER DEFAULT 0")
+	_add_column_if_missing("save_state", "last_food_planet_id", "INTEGER DEFAULT -1")
 
 
 func _add_column_if_missing(table_name: String, column_name: String, column_def: String) -> void:
@@ -860,6 +864,31 @@ func get_relationship_value(crew_a_id: int, crew_b_id: int) -> float:
 	if result.is_empty():
 		return 0.0
 	return result[0].value
+
+
+func update_relationship(crew_a_id: int, crew_b_id: int, new_value: float) -> void:
+	## Updates the relationship value between two crew members.
+	var a: int = mini(crew_a_id, crew_b_id)
+	var b: int = maxi(crew_a_id, crew_b_id)
+	db.query_with_bindings(
+		"UPDATE crew_relationships SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE crew_a_id = ? AND crew_b_id = ?",
+		[new_value, a, b]
+	)
+
+
+func get_all_crew_relationships(save_id: int) -> Array:
+	## Returns all relationship rows for active crew in a save.
+	var crew_ids: Array = db.select_rows("crew_members", "save_id = %d AND is_active = 1" % save_id, ["id"])
+	if crew_ids.is_empty():
+		return []
+	var all_rels: Array = []
+	for crew: Dictionary in crew_ids:
+		var rels: Array = get_crew_relationships(crew.id)
+		for rel: Dictionary in rels:
+			# Avoid duplicates — only add if crew_a_id matches
+			if rel.crew_a_id == crew.id:
+				all_rels.append(rel)
+	return all_rels
 
 
 func delete_crew_relationships(crew_id: int) -> void:
