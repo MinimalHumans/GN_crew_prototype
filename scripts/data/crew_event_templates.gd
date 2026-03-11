@@ -141,6 +141,61 @@ const TRAVEL_CREW_BAD: Array[String] = [
 ]
 
 
+# === SPECIES-SPECIFIC RELATIONSHIP TEXT (Phase 3.3) ===
+
+const SPECIES_FRICTION_TEXT: Dictionary = {
+	"GORVIAN_KRELLVANI": [
+		"{a} and {b} argue over trade routes. Old rivalries die hard between Gorvian and Krellvani.",
+		"{a} mutters something about Krellvani stubbornness. {b} pretends not to hear.",
+		"A cold exchange between {a} and {b}. The Gorvian-Krellvani divide runs deep.",
+	],
+	"GORVIAN_VELLANI": [
+		"{a} and {b} disagree about how to organize the supply locker. Hierarchy versus communalism.",
+		"{a} finds {b}'s approach inefficient. The feeling seems mutual.",
+	],
+}
+
+const SPECIES_BONDING_TEXT: Dictionary = {
+	"GORVIAN_KRELLVANI": [
+		"{a} and {b} found common ground over engine diagnostics. Surprising, given their species' history.",
+		"Against all odds, {a} and {b} are actually getting along. Something shifted between them.",
+	],
+	"KRELLVANI_VELLANI": [
+		"{a} and {b} share stories of their respective frontiers. Independence resonates with both.",
+		"{a} and {b} discovered a mutual love of open spaces. Their bond is growing.",
+	],
+	"GORVIAN_HUMAN": [
+		"{a} and {b} share a professional respect. Gorvians appreciate Commonwealth structure.",
+		"{a} is impressed by {b}'s work ethic. The institutional respect runs both ways.",
+	],
+	"HUMAN_VELLANI": [
+		"{a} and {b} swap exploration stories over evening tea. An easy friendship.",
+		"{a} and {b} bond over a shared curiosity about what's beyond the next jump.",
+	],
+}
+
+# === COMFORT FOOD TEXT (Phase 3.4) ===
+
+const COMFORT_FOOD_TEXT: Dictionary = {
+	"Human": [
+		"{name} smiles at the familiar taste of Commonwealth rations. Feels like home.",
+		"{name} savors the proper Human food. Nothing beats comfort cooking.",
+	],
+	"Gorvian": [
+		"{name} grins at the sight of proper Gorvian provisions. Spiced and precise.",
+		"{name}'s mood brightens with authentic Hexarchy cuisine.",
+	],
+	"Vellani": [
+		"{name}'s eyes light up. Real Vellani spiced provisions at last.",
+		"{name} hums contentedly over a bowl of proper FPU food.",
+	],
+	"Krellvani": [
+		"{name} tears into the Outer Reach rations with obvious satisfaction.",
+		"{name} grins. Nothing like proper Krellvani grub to lift the spirits.",
+	],
+}
+
+
 # === DECISION EVENT DEFINITIONS ===
 
 static func get_decision_events() -> Dictionary:
@@ -240,3 +295,26 @@ static func get_nudge_text(nudge_type: String, name_a: String = "", name_b: Stri
 			return ""
 	var text: String = _pick(pool)
 	return text.replace("{a}", name_a).replace("{b}", name_b)
+
+
+static func get_species_friction_text(name_a: String, name_b: String, pair_key: String) -> String:
+	## Returns species-specific friction event text.
+	if SPECIES_FRICTION_TEXT.has(pair_key):
+		var text: String = _pick(SPECIES_FRICTION_TEXT[pair_key])
+		return text.replace("{a}", name_a).replace("{b}", name_b)
+	return "%s and %s had a tense moment." % [name_a, name_b]
+
+
+static func get_species_bonding_text(name_a: String, name_b: String, pair_key: String) -> String:
+	## Returns species-specific bonding event text.
+	if SPECIES_BONDING_TEXT.has(pair_key):
+		var text: String = _pick(SPECIES_BONDING_TEXT[pair_key])
+		return text.replace("{a}", name_a).replace("{b}", name_b)
+	return "%s and %s are getting along surprisingly well." % [name_a, name_b]
+
+
+static func get_comfort_food_text(crew_name: String, species_name: String) -> String:
+	## Returns species-specific comfort food text.
+	if COMFORT_FOOD_TEXT.has(species_name):
+		return _pick(COMFORT_FOOD_TEXT[species_name]).replace("{name}", crew_name)
+	return "%s enjoys the familiar food." % crew_name

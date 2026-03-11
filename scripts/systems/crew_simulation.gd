@@ -120,6 +120,16 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		if cm.comfort_food_ticks > 0:
 			cm.comfort_food_ticks -= 1
 
+		# --- Morale bonus (permanent, from bonding breakthrough etc.) ---
+		# Applied as a constant positive modifier each tick
+
+		# --- Krellvani claustrophobia on Corvette ---
+		if cm.species == CrewMember.Species.KRELLVANI and GameManager.ship_class == "corvette":
+			cm.morale = maxf(0.0, cm.morale - 5.0)
+			if not GameManager.claustrophobia_logged.has(cm.id):
+				events.append("[color=#E67E22]%s is uncomfortable — Krellvani don't do well in tight quarters.[/color]" % cm.crew_name)
+				GameManager.claustrophobia_logged[cm.id] = true
+
 		# --- Morale drift ---
 		var modifier_sum: float = 0.0
 		modifier_sum += _get_pay_modifier(GameManager.pay_split)
@@ -128,6 +138,7 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		modifier_sum += _get_safety_modifier()
 		modifier_sum += _get_purpose_modifier(cm)
 		modifier_sum += _get_relationship_modifier(cm.id)
+		modifier_sum += cm.morale_bonus  # Permanent bonus (e.g., bonding breakthrough)
 
 		# Calculate target morale and drift toward it
 		var target: float = clampf(cm.morale + modifier_sum, 0.0, 100.0)
@@ -141,12 +152,18 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			cm.morale = maxf(target, cm.morale - drift_speed)
 		cm.morale = clampf(cm.morale, 0.0, 100.0)
 
+		# --- Injury recovery ---
+		var recovered: Array[String] = cm.tick_injuries()
+		for recovery_text: String in recovered:
+			events.append("[color=#27AE60]%s[/color]" % recovery_text)
+
 		# --- Persist crew state ---
 		DatabaseManager.update_crew_member(cm.id, {
 			"morale": cm.morale,
 			"fatigue": cm.fatigue,
 			"ticks_since_role_used": cm.ticks_since_role_used,
 			"comfort_food_ticks": cm.comfort_food_ticks,
+			"injuries": JSON.stringify(cm.injuries),
 		})
 
 	# --- Relationship shifts ---
@@ -260,6 +277,11 @@ static func _process_relationships_tick(roster: Array[CrewMember], had_encounter
 					var friction_event: String = CrewEventTemplates.get_negative_social_text(cm_a.crew_name, cm_b.crew_name)
 					events.append("[color=#718096]%s[/color]" % friction_event)
 
+			# Phase 3.3: Species-specific relationship events
+			var species_event: String = _check_species_relationship_event(cm_a, cm_b, current_val)
+			if species_event != "":
+				events.append(species_event)
+
 			# Apply delta
 			if absf(delta) > 0.01:
 				var new_val: float = clampf(current_val + delta, -100.0, 100.0)
@@ -270,6 +292,11 @@ static func _process_relationships_tick(roster: Array[CrewMember], had_encounter
 					events.append("[color=#27AE60]%s and %s seem to be bonding.[/color]" % [cm_a.crew_name, cm_b.crew_name])
 				elif delta <= -5.0:
 					events.append("[color=#C0392B]%s and %s had a tense exchange.[/color]" % [cm_a.crew_name, cm_b.crew_name])
+
+				# Phase 3.3: Bonding breakthrough check
+				var breakthrough_event: String = _check_bonding_breakthrough(cm_a, cm_b, new_val)
+				if breakthrough_event != "":
+					events.append(breakthrough_event)
 
 	return events
 
@@ -356,3 +383,85 @@ static func process_mission_result(outcome_tier: String, roles_tested: Array) ->
 		var role_str: String = CrewMember._role_to_string(cm.role)
 		if role_str in roles_tested:
 			DatabaseManager.update_crew_member(cm.id, {"ticks_since_role_used": 0})
+
+
+# === PHASE 3.3: SPECIES RELATIONSHIP EVENTS ===
+
+static func _get_species_pair_key(cm_a: CrewMember, cm_b: CrewMember) -> String:
+	## Returns a sorted species pair key for lookup.
+	var name_a: String = cm_a.get_species_name().to_upper()
+	var name_b: String = cm_b.get_species_name().to_upper()
+	if name_a < name_b:
+		return "%s_%s" % [name_a, name_b]
+	return "%s_%s" % [name_b, name_a]
+
+
+static func _check_species_relationship_event(cm_a: CrewMember, cm_b: CrewMember, rel_value: float) -> String:
+	## Checks for species-specific relationship events based on pair and relationship state.
+	## Returns event text or empty string.
+	if cm_a.species == cm_b.species:
+		return ""  # Same species — no special events
+
+	var pair_key: String = _get_species_pair_key(cm_a, cm_b)
+	# 10% chance per tick to fire a species event
+	if randf() > 0.10:
+		return ""
+
+	match pair_key:
+		"GORVIAN_KRELLVANI":
+			if rel_value < -10.0:
+				return "[color=#E67E22]%s[/color]" % CrewEventTemplates.get_species_friction_text(
+					cm_a.crew_name, cm_b.crew_name, "GORVIAN_KRELLVANI")
+			elif rel_value > 20.0:
+				return "[color=#27AE60]%s[/color]" % CrewEventTemplates.get_species_bonding_text(
+					cm_a.crew_name, cm_b.crew_name, "GORVIAN_KRELLVANI")
+		"GORVIAN_VELLANI":
+			if rel_value < -10.0:
+				return "[color=#E67E22]%s[/color]" % CrewEventTemplates.get_species_friction_text(
+					cm_a.crew_name, cm_b.crew_name, "GORVIAN_VELLANI")
+		"KRELLVANI_VELLANI":
+			if rel_value > 20.0:
+				return "[color=#27AE60]%s[/color]" % CrewEventTemplates.get_species_bonding_text(
+					cm_a.crew_name, cm_b.crew_name, "KRELLVANI_VELLANI")
+		"GORVIAN_HUMAN":
+			if rel_value > 20.0:
+				return "[color=#27AE60]%s[/color]" % CrewEventTemplates.get_species_bonding_text(
+					cm_a.crew_name, cm_b.crew_name, "GORVIAN_HUMAN")
+		"HUMAN_VELLANI":
+			if rel_value > 20.0 and randf() < 0.3:
+				return "[color=#4CAF50]%s[/color]" % CrewEventTemplates.get_species_bonding_text(
+					cm_a.crew_name, cm_b.crew_name, "HUMAN_VELLANI")
+	return ""
+
+
+static func _check_bonding_breakthrough(cm_a: CrewMember, cm_b: CrewMember, rel_value: float) -> String:
+	## Checks for cross-species bonding breakthrough at +30 relationship.
+	## Gorvian-Krellvani pairs get a special event and +3 permanent morale bonus.
+	if cm_a.species == cm_b.species:
+		return ""
+	if rel_value < 30.0:
+		return ""
+
+	# Check if bonding_breakthrough already happened for this pair
+	var a_id: int = mini(cm_a.id, cm_b.id)
+	var b_id: int = maxi(cm_a.id, cm_b.id)
+	var rels: Array = DatabaseManager.get_crew_relationships(a_id)
+	for rel: Dictionary in rels:
+		if (rel.crew_a_id == a_id and rel.crew_b_id == b_id) or \
+		   (rel.crew_a_id == b_id and rel.crew_b_id == a_id):
+			if rel.get("bonding_breakthrough", 0) == 1:
+				return ""  # Already happened
+
+	# Mark breakthrough as complete
+	DatabaseManager.update_bonding_breakthrough(a_id, b_id)
+
+	# Apply +3 permanent morale bonus to both
+	cm_a.morale_bonus += 3.0
+	cm_b.morale_bonus += 3.0
+	DatabaseManager.update_crew_member(cm_a.id, {"morale_bonus": cm_a.morale_bonus})
+	DatabaseManager.update_crew_member(cm_b.id, {"morale_bonus": cm_b.morale_bonus})
+
+	var pair_key: String = _get_species_pair_key(cm_a, cm_b)
+	if pair_key == "GORVIAN_KRELLVANI":
+		return "[color=#E6D159]Breakthrough! %s and %s have bridged the divide between Gorvian and Krellvani. Their bond strengthens the entire crew. (+3 permanent morale)[/color]" % [cm_a.crew_name, cm_b.crew_name]
+	return "[color=#E6D159]%s and %s have formed a deep bond across species lines. (+3 permanent morale)[/color]" % [cm_a.crew_name, cm_b.crew_name]

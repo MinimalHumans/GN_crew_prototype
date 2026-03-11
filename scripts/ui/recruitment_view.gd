@@ -32,8 +32,23 @@ func _ready() -> void:
 # === CANDIDATE GENERATION ===
 
 func _generate_candidates() -> void:
-	var count: int = randi_range(3, 6)
-	candidates = CrewGenerator.generate_candidates(planet_id, count, GameManager.captain_level)
+	## Faction access modifies candidate count and quality.
+	## Outsider: fewer candidates (-1). Insider: more (+1), better stats.
+	var base_count: int = randi_range(3, 6)
+	var access: GameManager.AccessLevel = GameManager.get_faction_access_level(planet_id)
+	if access == GameManager.AccessLevel.OUTSIDER:
+		base_count = maxi(base_count - 1, 2)
+	elif access == GameManager.AccessLevel.INSIDER:
+		base_count += 1
+	candidates = CrewGenerator.generate_candidates(planet_id, base_count, GameManager.captain_level)
+	# Insider bonus: +5 to all stats for each candidate
+	if access == GameManager.AccessLevel.INSIDER:
+		for cm: CrewMember in candidates:
+			cm.stamina = mini(cm.stamina + 5, 100)
+			cm.cognition = mini(cm.cognition + 5, 100)
+			cm.reflexes = mini(cm.reflexes + 5, 100)
+			cm.social = mini(cm.social + 5, 100)
+			cm.resourcefulness = mini(cm.resourcefulness + 5, 100)
 
 
 # === UI BUILDING ===
@@ -245,8 +260,8 @@ func _show_expanded_profile(cm: CrewMember, index: int) -> void:
 	log_message.emit("[color=%s]%s[/color]" % [COLOR_MUTED, cm.personality])
 	log_message.emit("[color=%s]Species: %s[/color]" % [COLOR_MUTED, cm.get_species_trait_text()])
 
-	# Krellvani warning on Corvette
-	if cm.species == CrewMember.Species.KRELLVANI and GameManager.ship_class == "corvette":
+	# Krellvani warning on Corvette/Frigate
+	if cm.species == CrewMember.Species.KRELLVANI and GameManager.ship_class in ["corvette", "frigate"]:
 		log_message.emit("[color=%s]Warning: Krellvani require 1.5 crew slots on this ship class.[/color]" % COLOR_BAD)
 
 	# Compatibility check

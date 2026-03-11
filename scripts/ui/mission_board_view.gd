@@ -37,10 +37,16 @@ func _ready() -> void:
 
 func _ensure_missions_exist() -> void:
 	## Generate missions for this planet if none exist.
+	## Faction access modifies count: outsider -1, insider +1.
 	var existing: Array = DatabaseManager.get_missions_available(planet_id)
 	if existing.is_empty():
-		var count: int = randi_range(3, 5)
-		MissionGenerator.generate_and_store(planet_id, GameManager.captain_level, count)
+		var base_count: int = randi_range(3, 5)
+		var access: GameManager.AccessLevel = GameManager.get_faction_access_level(planet_id)
+		if access == GameManager.AccessLevel.OUTSIDER:
+			base_count = maxi(base_count - 1, 2)
+		elif access == GameManager.AccessLevel.INSIDER:
+			base_count += 1
+		MissionGenerator.generate_and_store(planet_id, GameManager.captain_level, base_count, access)
 
 
 # === UI BUILDING ===

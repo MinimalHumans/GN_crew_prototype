@@ -80,7 +80,16 @@ func _update_planet_display() -> void:
 
 	planet_name_label.text = planet.name
 	var type_display: String = planet.type.replace("_", " ").capitalize()
-	faction_label.text = "%s  —  %s Zone" % [type_display, planet.zone]
+	# Show faction emblem indicator based on access level
+	var access: GameManager.AccessLevel = GameManager.get_faction_access_level(GameManager.current_planet_id)
+	var access_indicator: String = ""
+	if planet.get("is_neutral", 0) == 1:
+		access_indicator = " [N]"
+	elif access == GameManager.AccessLevel.INSIDER:
+		access_indicator = " [+]"
+	elif access == GameManager.AccessLevel.OUTSIDER:
+		access_indicator = " [-]"
+	faction_label.text = "%s  —  %s Zone%s" % [type_display, planet.zone, access_indicator]
 
 	# Tint the planet rect by faction color
 	var faction_color: Color = TextTemplates.get_faction_color(planet.faction)
@@ -279,6 +288,16 @@ func _display_mission_result(result: Dictionary) -> void:
 
 	_append_log("")
 	_append_log("[color=#4A90D9]--- Mission Complete: %s ---[/color]" % mission.title)
+
+	# Show which crew handled it
+	var primary_role: String = result.get("primary_role", "")
+	var secondary_role: String = result.get("secondary_role", "")
+	if primary_role != "":
+		var crew_line: String = "  Crew: %s" % primary_role
+		if secondary_role != "":
+			crew_line += " + %s (support)" % secondary_role
+		_append_log("[color=#718096]%s[/color]" % crew_line)
+
 	_append_log(outcome_text)
 
 	if result.credit_reward > 0:
@@ -287,6 +306,11 @@ func _display_mission_result(result: Dictionary) -> void:
 		_append_log("[color=#4A90D9]+%d XP[/color]" % result.xp_reward)
 	if result.hull_damage > 0:
 		_append_log("[color=#C0392B]Hull damage: -%d HP[/color]" % result.hull_damage)
+
+	# Crew consequence events from the mission
+	var crew_events: Array = result.get("crew_events", [])
+	for event_text: String in crew_events:
+		_append_log(event_text)
 
 
 # === LEVEL-UP NOTIFICATION ===
@@ -321,6 +345,9 @@ func _log_arrival() -> void:
 	_append_log("[color=#4A90D9]%s[/color]" % arrival)
 	_append_log("[color=#718096]%s[/color]" % planet.description)
 
+	# Phase 3: Faction access arrival flavor text
+	_log_faction_access(planet)
+
 
 func _process_crew_arrival() -> void:
 	## Runs crew simulation arrival tick — fatigue recovery, comfort food, promise fulfillment.
@@ -340,6 +367,36 @@ func _process_crew_arrival() -> void:
 	var morale_color: String = GameManager.get_ship_morale_color()
 	_append_log("[color=%s]Ship morale: %s[/color]" % [morale_color, morale_word])
 	_append_log("")
+
+
+func _log_faction_access(planet: Dictionary) -> void:
+	## Shows subtle faction access flavor text on arrival.
+	if planet.get("is_neutral", 0) == 1:
+		_append_log("[color=#718096]Neutral ground. All factions trade freely here.[/color]")
+		return
+
+	var access: GameManager.AccessLevel = GameManager.get_faction_access_level(GameManager.current_planet_id)
+	var faction: String = planet.get("faction", "")
+	var faction_color: String = TextTemplates.get_faction_hex_color(faction)
+
+	match access:
+		GameManager.AccessLevel.OUTSIDER:
+			var text: String = TextTemplates.get_faction_access_text("outsider", planet.name, faction)
+			_append_log("[color=%s]%s[/color]" % [faction_color, text])
+		GameManager.AccessLevel.INSIDER:
+			var text: String = TextTemplates.get_faction_access_text("insider", planet.name, faction)
+			_append_log("[color=%s]%s[/color]" % [faction_color, text])
+		_:
+			pass  # Baseline — no special message
+
+	# Phase 3.2: Gorvian cold sensitivity on cold planets
+	if planet.get("cold_environment", 0) == 1:
+		var roster: Array[CrewMember] = GameManager.get_crew_roster()
+		for cm: CrewMember in roster:
+			if cm.species == CrewMember.Species.GORVIAN:
+				var new_morale: float = maxf(0.0, cm.morale - 3.0)
+				DatabaseManager.update_crew_member(cm.id, {"morale": new_morale})
+				_append_log("[color=#E67E22]%s shivers in the cold. Gorvians don't handle freezing well.[/color]" % cm.crew_name)
 
 
 func _append_log(text: String) -> void:

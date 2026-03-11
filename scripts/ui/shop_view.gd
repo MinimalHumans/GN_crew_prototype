@@ -11,6 +11,7 @@ var planet_prices: Dictionary = {}  # {commodity_id: {buy, sell}}
 var galaxy_averages: Dictionary = {}  # {commodity_id: {avg_buy, avg_sell}}
 var commodity_names: Dictionary = {}  # {commodity_id: name}
 var cargo_quantities: Dictionary = {}  # {commodity_id: quantity}
+var price_modifier: float = 1.0  # Faction access price modifier
 
 # Repair cost per HP by planet id
 const REPAIR_COST: Dictionary = {
@@ -45,6 +46,7 @@ func _init(p_planet_id: int = -1) -> void:
 func _ready() -> void:
 	if planet_id < 0:
 		return
+	price_modifier = GameManager.get_price_modifier(planet_id)
 	_load_data()
 	_build_ui()
 	# Listen for changes to refresh display
@@ -195,12 +197,13 @@ func _populate_trade_rows() -> void:
 		empty.add_theme_font_size_override("font_size", 12)
 		your_cargo_container.add_child(empty)
 
-	# Buy side: all commodities available at this planet
+	# Buy side: all commodities available at this planet (with faction price modifier)
 	for cid: int in commodity_names:
-		var buy_price: int = planet_prices.get(cid, {}).get("buy", 0)
-		if buy_price <= 0:
+		var base_buy: int = planet_prices.get(cid, {}).get("buy", 0)
+		if base_buy <= 0:
 			continue
-		available_container.add_child(_make_trade_row(cid, buy_price, 0, true))
+		var modified_buy: int = int(float(base_buy) * price_modifier)
+		available_container.add_child(_make_trade_row(cid, modified_buy, 0, true))
 
 
 func _make_trade_row(commodity_id: int, price: int, held_qty: int, is_buy: bool) -> HBoxContainer:
@@ -282,8 +285,8 @@ func _get_price_color(commodity_id: int, price: int, is_buy: bool) -> String:
 func _build_supply_section(parent: VBoxContainer) -> void:
 	parent.add_child(_make_section_label("SUPPLIES"))
 
-	# Fuel
-	var fuel_buy: int = planet_prices.get(2, {}).get("buy", 12)  # Commodity 2 = Fuel
+	# Fuel (with faction price modifier)
+	var fuel_buy: int = int(float(planet_prices.get(2, {}).get("buy", 12)) * price_modifier)
 	var fuel_needed: float = GameManager.fuel_max - GameManager.fuel_current
 
 	var fuel_row: HBoxContainer = HBoxContainer.new()
@@ -316,8 +319,8 @@ func _build_supply_section(parent: VBoxContainer) -> void:
 
 	parent.add_child(fuel_row)
 
-	# Food
-	var food_buy: int = planet_prices.get(1, {}).get("buy", 10)  # Commodity 1 = Food
+	# Food (with faction price modifier)
+	var food_buy: int = int(float(planet_prices.get(1, {}).get("buy", 10)) * price_modifier)
 
 	var food_row: HBoxContainer = HBoxContainer.new()
 	food_row.add_theme_constant_override("separation", 6)
@@ -365,7 +368,7 @@ func _build_repair_row(parent: VBoxContainer) -> void:
 	if damage <= 0:
 		return
 
-	var cost_per_hp: int = REPAIR_COST.get(planet_id, 3)
+	var cost_per_hp: int = int(float(REPAIR_COST.get(planet_id, 3)) * price_modifier)
 	var total_cost: int = damage * cost_per_hp
 
 	var repair_row: HBoxContainer = HBoxContainer.new()
@@ -416,9 +419,10 @@ func _on_sell(commodity_id: int, spin: SpinBox, price: int) -> void:
 		log_message.emit("[color=%s]Not enough cargo to sell.[/color]" % COLOR_BAD)
 
 
-func _on_refuel(price_per_unit: int) -> void:
+func _on_refuel(_base_price: int) -> void:
+	var modified_price: int = int(float(planet_prices.get(2, {}).get("buy", 12)) * price_modifier)
 	var units: float = float(fuel_spin.value)
-	var cost: int = int(units) * price_per_unit
+	var cost: int = int(units) * modified_price
 	if GameManager.refuel(units, cost):
 		if GameManager.fuel_current >= GameManager.fuel_max:
 			log_message.emit("[color=%s]Refueled — tank full. (%d credits)[/color]" % [COLOR_GOOD, cost])
@@ -428,11 +432,14 @@ func _on_refuel(price_per_unit: int) -> void:
 		log_message.emit("[color=%s]Not enough credits to refuel.[/color]" % COLOR_BAD)
 
 
-func _on_buy_food(price_per_unit: int) -> void:
+func _on_buy_food(_base_price: int) -> void:
+	var modified_price: int = int(float(planet_prices.get(1, {}).get("buy", 10)) * price_modifier)
 	var units: float = float(food_spin.value)
-	var cost: int = int(units) * price_per_unit
+	var cost: int = int(units) * modified_price
 	if GameManager.buy_food(units, cost):
 		log_message.emit("[color=%s]Restocked %.0f food supplies. (%d credits)[/color]" % [COLOR_GOOD, units, cost])
+		# Phase 3.4: Comfort food — check for species-matching food
+		_apply_comfort_food()
 	else:
 		log_message.emit("[color=%s]Not enough credits for food.[/color]" % COLOR_BAD)
 
@@ -477,17 +484,37 @@ func _update_cargo_label() -> void:
 
 func _update_fuel_cost() -> void:
 	if fuel_cost_label and fuel_spin:
-		var fuel_buy: int = planet_prices.get(2, {}).get("buy", 12)
+		var fuel_buy: int = int(float(planet_prices.get(2, {}).get("buy", 12)) * price_modifier)
 		fuel_cost_label.text = "= %d cr" % (int(fuel_spin.value) * fuel_buy)
 
 
 func _update_food_cost() -> void:
 	if food_cost_label and food_spin:
-		var food_buy: int = planet_prices.get(1, {}).get("buy", 10)
+		var food_buy: int = int(float(planet_prices.get(1, {}).get("buy", 10)) * price_modifier)
 		food_cost_label.text = "= %d cr" % (int(food_spin.value) * food_buy)
 
 
 # === HELPERS ===
+
+func _apply_comfort_food() -> void:
+	## Phase 3.4: When buying food at a faction-matching planet, crew of that species
+	## get an immediate +4 morale and a 10-tick comfort food buff (+2 morale via drift).
+	var planet: Dictionary = GameManager.get_current_planet()
+	if planet.is_empty():
+		return
+	var planet_faction: String = planet.get("faction", "")
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	for cm: CrewMember in roster:
+		if cm.get_species_name() == planet_faction:
+			cm.comfort_food_ticks = 10
+			var new_morale: float = minf(100.0, cm.morale + 4.0)
+			DatabaseManager.update_crew_member(cm.id, {
+				"morale": new_morale,
+				"comfort_food_ticks": cm.comfort_food_ticks,
+			})
+			var food_text: String = CrewEventTemplates.get_comfort_food_text(cm.crew_name, cm.get_species_name())
+			log_message.emit("[color=#4CAF50]%s[/color]" % food_text)
+
 
 func _make_section_label(text: String) -> Label:
 	var label: Label = Label.new()

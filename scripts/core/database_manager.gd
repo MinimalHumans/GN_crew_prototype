@@ -672,6 +672,23 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("crew_members", "ticks_since_role_used", "INTEGER DEFAULT 0")
 	_add_column_if_missing("crew_members", "comfort_food_ticks", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "last_food_planet_id", "INTEGER DEFAULT -1")
+	# Phase 2.7 injury tracking and fast learner flag
+	_add_column_if_missing("crew_members", "injuries", "TEXT DEFAULT '[]'")
+	_add_column_if_missing("crew_members", "fast_learner", "INTEGER DEFAULT 0")
+	# Phase 3 species & faction identity
+	_add_column_if_missing("crew_members", "morale_bonus", "REAL DEFAULT 0.0")
+	_add_column_if_missing("planets", "cold_environment", "INTEGER DEFAULT 0")
+	_add_column_if_missing("planets", "is_neutral", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_relationships", "bonding_breakthrough", "INTEGER DEFAULT 0")
+	# Seed Phase 3 planet flags
+	_seed_phase3_planet_flags()
+
+
+func _seed_phase3_planet_flags() -> void:
+	## Sets cold_environment on Dvarn (id=5) and is_neutral on Nexus Station (id=12).
+	## Safe to call multiple times — just updates existing rows.
+	db.query_with_bindings("UPDATE planets SET cold_environment = 1 WHERE id = ?", [5])
+	db.query_with_bindings("UPDATE planets SET is_neutral = 1 WHERE id = ?", [12])
 
 
 func _add_column_if_missing(table_name: String, column_name: String, column_def: String) -> void:
@@ -889,6 +906,16 @@ func get_all_crew_relationships(save_id: int) -> Array:
 			if rel.crew_a_id == crew.id:
 				all_rels.append(rel)
 	return all_rels
+
+
+func update_bonding_breakthrough(crew_a_id: int, crew_b_id: int) -> void:
+	## Marks a bonding breakthrough as complete between two crew members.
+	var a: int = mini(crew_a_id, crew_b_id)
+	var b: int = maxi(crew_a_id, crew_b_id)
+	db.query_with_bindings(
+		"UPDATE crew_relationships SET bonding_breakthrough = 1, updated_at = CURRENT_TIMESTAMP WHERE crew_a_id = ? AND crew_b_id = ?",
+		[a, b]
+	)
 
 
 func delete_crew_relationships(crew_id: int) -> void:

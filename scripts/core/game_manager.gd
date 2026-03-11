@@ -28,7 +28,7 @@ const FOOD_PER_CREW_PER_JUMP: float = 1.0
 
 # Crew constants
 const RECRUITMENT_FEE: int = 50
-const KRELLVANI_SLOT_COST_CORVETTE: float = 1.5
+const KRELLVANI_SLOT_COST_SMALL: float = 1.5
 
 # Mission constants
 const MAX_ACTIVE_MISSIONS: int = 3
@@ -85,6 +85,16 @@ var nudge_cooldowns: Dictionary = {}  # {nudge_type: ticks_remaining}
 var stowaway_found: bool = false
 var pending_promises: Array[Dictionary] = []  # e.g., {"type": "dock", "ticks_remaining": 3, "crew_id": 5}
 var last_food_planet_id: int = -1
+
+# Phase 3 one-time log flags (reset per session)
+var gorvian_fuel_logged: bool = false
+var claustrophobia_logged: Dictionary = {}  # {crew_id: true}
+var cold_morale_logged: Dictionary = {}  # {planet_id: true}
+
+# Faction access level constants
+enum AccessLevel { OUTSIDER, BASELINE, INSIDER }
+const OUTSIDER_PRICE_MARKUP: float = 1.20
+const INSIDER_PRICE_DISCOUNT: float = 0.90
 
 
 # === INITIALIZATION ===
@@ -281,23 +291,24 @@ func get_xp_progress() -> float:
 # === TRAVEL ===
 
 func get_fuel_cost_per_jump() -> float:
-	## Returns fuel cost per jump based on ship class.
+	## Returns fuel cost per jump based on ship class, reduced by Gorvian crew.
+	var base: float
 	match ship_class:
 		"skiff":
-			return FUEL_PER_JUMP_SKIFF
+			base = FUEL_PER_JUMP_SKIFF
 		"corvette":
-			return FUEL_PER_JUMP_CORVETTE
+			base = FUEL_PER_JUMP_CORVETTE
 		"frigate":
-			return FUEL_PER_JUMP_FRIGATE
+			base = FUEL_PER_JUMP_FRIGATE
 		_:
-			return FUEL_PER_JUMP_SKIFF
+			base = FUEL_PER_JUMP_SKIFF
+	return base * get_gorvian_fuel_reduction()
 
 
 func get_food_cost_per_jump() -> float:
-	## Returns food consumed per jump. Captain eats 1 unit. Each crew eats 1 unit.
-	## Vellani eat 0.7x (handled in Phase 3 with species traits).
-	var crew_count: int = DatabaseManager.get_active_crew_count(save_id)
-	return FOOD_PER_CAPTAIN_PER_JUMP + crew_count * FOOD_PER_CREW_PER_JUMP
+	## Returns food consumed per jump with species modifiers.
+	## Captain eats 1.0. Vellani eat 0.7x. Krellvani eat 1.3x. Others eat 1.0x.
+	return get_species_food_cost()
 
 
 func get_encounter_chance(danger_level: String) -> float:
@@ -631,11 +642,33 @@ func complete_missions_at_planet(planet_id: int) -> Array[Dictionary]:
 
 
 func _resolve_mission(mission: Dictionary) -> Dictionary:
-	## Runs the stat check and calculates rewards for a completed mission.
-	var primary_stat: String = TextTemplates.get_mission_primary_stat(mission.mission_type)
-	var stat_value: int = _get_stat(primary_stat)
+	## Runs crew-aware stat check and calculates rewards for a completed mission.
 	var scaled_difficulty: int = DIFFICULTY_SCALE_BASE + mission.difficulty * DIFFICULTY_SCALE_PER_STAR
-	var outcome: Dictionary = resolve_challenge(stat_value, scaled_difficulty)
+	var roster: Array[CrewMember] = get_crew_roster()
+
+	# Parse roles from mission data
+	var roles: Array = JSON.parse_string(mission.get("roles_tested", "[]"))
+	if roles == null or roles.is_empty():
+		roles = ["Generalist"]
+	var primary_role: String = roles[0]
+	var secondary_role: String = roles[1] if roles.size() > 1 else ""
+
+	# Use crew-aware resolution if crew exists, otherwise captain-only
+	var outcome: Dictionary
+	var crew_events: Array[String] = []
+
+	if roster.size() > 0:
+		outcome = ChallengeResolver.resolve_crew_challenge(
+			roster, primary_role, secondary_role, scaled_difficulty)
+		# Apply crew consequences from mission
+		crew_events = ChallengeResolver.apply_crew_consequences(outcome, roster)
+		# Process relationship effects
+		CrewSimulation.process_mission_result(outcome.tier, roles)
+	else:
+		# Solo captain — fallback to basic resolution
+		var primary_stat: String = TextTemplates.get_mission_primary_stat(mission.mission_type)
+		var stat_value: int = _get_stat(primary_stat)
+		outcome = resolve_challenge(stat_value, scaled_difficulty)
 
 	# Calculate rewards based on outcome tier
 	var credit_reward: int = 0
@@ -682,6 +715,9 @@ func _resolve_mission(mission: Dictionary) -> Dictionary:
 		"credit_reward": credit_reward,
 		"xp_reward": xp_reward,
 		"hull_damage": hull_damage,
+		"crew_events": crew_events,
+		"primary_role": primary_role,
+		"secondary_role": secondary_role,
 	}
 
 
@@ -725,8 +761,8 @@ func get_used_crew_slots() -> float:
 	var crew: Array = DatabaseManager.get_active_crew(save_id)
 	var used: float = 0.0
 	for row: Dictionary in crew:
-		if row.species == "KRELLVANI" and ship_class == "corvette":
-			used += KRELLVANI_SLOT_COST_CORVETTE
+		if row.species == "KRELLVANI" and ship_class in ["corvette", "frigate"]:
+			used += KRELLVANI_SLOT_COST_SMALL
 		else:
 			used += 1.0
 	return used
@@ -742,8 +778,8 @@ func can_recruit(candidate: CrewMember) -> Dictionary:
 		return {"can": false, "reason": "Your ship has no crew berths."}
 	var slot_cost: float = candidate.get_crew_slot_cost(ship_class)
 	if get_available_crew_slots() < slot_cost:
-		if candidate.species == CrewMember.Species.KRELLVANI and ship_class == "corvette":
-			return {"can": false, "reason": "Not enough crew slots. Krellvani require 1.5 slots on a Corvette."}
+		if candidate.species == CrewMember.Species.KRELLVANI and ship_class in ["corvette", "frigate"]:
+			return {"can": false, "reason": "Not enough crew slots. Krellvani require 1.5 slots on a %s." % ship_class.capitalize()}
 		return {"can": false, "reason": "Crew is full (%d/%d)." % [get_crew_count(), crew_max]}
 	if credits < RECRUITMENT_FEE:
 		return {"can": false, "reason": "Not enough credits for recruitment fee (%d cr)." % RECRUITMENT_FEE}
@@ -835,6 +871,101 @@ func set_pay_split(new_split: float) -> void:
 	pay_split = new_split
 	DatabaseManager.update_save_state(save_id, {"pay_split": pay_split})
 	EventBus.pay_split_changed.emit(pay_split)
+
+
+# === FACTION ACCESS SYSTEM ===
+
+func get_faction_access_level(planet_id: int) -> AccessLevel:
+	## Calculates access level at a planet based on crew composition.
+	## Returns OUTSIDER, BASELINE, or INSIDER.
+	var planet: Dictionary = DatabaseManager.get_planet(planet_id)
+	if planet.is_empty():
+		return AccessLevel.BASELINE
+
+	# Nexus Station is always baseline (neutral ground)
+	if planet.get("is_neutral", 0) == 1:
+		return AccessLevel.BASELINE
+
+	var planet_faction: String = planet.get("faction", "")
+	var roster: Array[CrewMember] = get_crew_roster()
+	var matching_count: int = 0
+	var has_matching_comms: bool = false
+	var has_high_social_comms: bool = false
+
+	# Captain (human) always counts as 1 for Commonwealth planets
+	if planet_faction == "Human":
+		matching_count += 1
+
+	for cm: CrewMember in roster:
+		var species_name: String = cm.get_species_name()
+		if species_name == planet_faction:
+			if cm.role == CrewMember.Role.COMMS_OFFICER:
+				matching_count += 2  # Comms Officer of matching species counts as 2
+				has_matching_comms = true
+			else:
+				matching_count += 1
+		elif cm.role == CrewMember.Role.COMMS_OFFICER and cm.social > 60:
+			has_high_social_comms = true
+
+	# Insider: 2+ matching crew, or 1 matching Comms Officer
+	if matching_count >= 2 or has_matching_comms:
+		return AccessLevel.INSIDER
+	# Baseline: 1 matching crew, or any Comms Officer with Social > 60
+	if matching_count >= 1 or has_high_social_comms:
+		return AccessLevel.BASELINE
+	# Outsider: 0 matching crew
+	return AccessLevel.OUTSIDER
+
+
+func get_price_modifier(planet_id: int) -> float:
+	## Returns the price multiplier for shop goods based on faction access.
+	var access: AccessLevel = get_faction_access_level(planet_id)
+	match access:
+		AccessLevel.OUTSIDER:
+			return OUTSIDER_PRICE_MARKUP
+		AccessLevel.INSIDER:
+			return INSIDER_PRICE_DISCOUNT
+		_:
+			return 1.0
+
+
+func get_access_level_name(access: AccessLevel) -> String:
+	match access:
+		AccessLevel.OUTSIDER:
+			return "outsider"
+		AccessLevel.INSIDER:
+			return "insider"
+		_:
+			return "baseline"
+
+
+# === SPECIES TRAIT HELPERS ===
+
+func get_gorvian_fuel_reduction() -> float:
+	## Returns fuel reduction multiplier from Gorvian crew (5% per Gorvian, max 20%).
+	var roster: Array[CrewMember] = get_crew_roster()
+	var gorvian_count: int = 0
+	for cm: CrewMember in roster:
+		if cm.species == CrewMember.Species.GORVIAN:
+			gorvian_count += 1
+	var reduction: float = minf(float(gorvian_count) * 0.05, 0.20)
+	return 1.0 - reduction
+
+
+func get_species_food_cost() -> float:
+	## Returns total food cost per jump accounting for species modifiers.
+	## Captain eats 1.0. Vellani eat 0.7x. Krellvani eat 1.3x. Others eat 1.0x.
+	var roster: Array[CrewMember] = get_crew_roster()
+	var total: float = FOOD_PER_CAPTAIN_PER_JUMP
+	for cm: CrewMember in roster:
+		match cm.species:
+			CrewMember.Species.VELLANI:
+				total += FOOD_PER_CREW_PER_JUMP * 0.7
+			CrewMember.Species.KRELLVANI:
+				total += FOOD_PER_CREW_PER_JUMP * 1.3
+			_:
+				total += FOOD_PER_CREW_PER_JUMP
+	return total
 
 
 # === CREW SIMULATION HELPERS ===

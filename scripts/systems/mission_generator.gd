@@ -58,12 +58,20 @@ static func generate_missions(planet_id: int, player_level: int, count: int = 4)
 	return missions
 
 
-static func generate_and_store(planet_id: int, player_level: int, count: int = 4) -> void:
+static func generate_and_store(planet_id: int, player_level: int, count: int = 4,
+		access_level: GameManager.AccessLevel = GameManager.AccessLevel.BASELINE) -> void:
 	## Generates missions and stores them in the database.
+	## At INSIDER level, one faction-exclusive mission is added.
 	DatabaseManager.clear_missions_available(planet_id)
 	var missions: Array[Dictionary] = generate_missions(planet_id, player_level, count)
 	for m: Dictionary in missions:
 		DatabaseManager.insert_mission_available(m)
+
+	# Insider: add one faction-exclusive mission
+	if access_level == GameManager.AccessLevel.INSIDER:
+		var exclusive: Dictionary = _generate_faction_exclusive(planet_id, player_level)
+		if not exclusive.is_empty():
+			DatabaseManager.insert_mission_available(exclusive)
 
 
 static func _generate_one(planet: Dictionary, destinations: Array[int], player_level: int) -> Dictionary:
@@ -194,6 +202,92 @@ static func _build_description(mission_type: String, dest_name: String, difficul
 
 
 # === DESTINATION HELPERS ===
+
+# === FACTION-EXCLUSIVE MISSIONS ===
+
+const FACTION_EXCLUSIVE_MISSIONS: Dictionary = {
+	"Human": [
+		{"type": "diplomatic_courier", "title_prefix": "Diplomatic Courier", "roles": ["Comms Officer", "Navigator"],
+		 "desc": "Deliver sealed diplomatic documents to {dest}. Commonwealth authority required.",
+		 "primary_stat": "social"},
+		{"type": "trade_regulation", "title_prefix": "Trade Regulation Audit", "roles": ["Comms Officer", "Science Officer"],
+		 "desc": "Conduct trade regulation audit at {dest}. Commonwealth clearance needed.",
+		 "primary_stat": "cognition"},
+		{"type": "census_survey", "title_prefix": "Census Survey", "roles": ["Science Officer", "Navigator"],
+		 "desc": "Perform population census survey near {dest}. Authorized personnel only.",
+		 "primary_stat": "cognition"},
+	],
+	"Gorvian": [
+		{"type": "technical_recovery", "title_prefix": "Technical Recovery", "roles": ["Engineer", "Security Chief"],
+		 "desc": "Recover classified Hexarchy technology from {dest}. Gorvian authorization required.",
+		 "primary_stat": "cognition"},
+		{"type": "deep_mining", "title_prefix": "Deep Mining Op", "roles": ["Engineer", "Navigator"],
+		 "desc": "Lead a deep mining extraction near {dest}. Hexarchy credentials needed.",
+		 "primary_stat": "stamina"},
+		{"type": "research_transport", "title_prefix": "Research Data Transport", "roles": ["Science Officer", "Navigator"],
+		 "desc": "Transport sensitive research data to {dest}. Hexarchy clearance required.",
+		 "primary_stat": "cognition"},
+	],
+	"Vellani": [
+		{"type": "cultural_exchange", "title_prefix": "Cultural Exchange", "roles": ["Comms Officer", "Medic"],
+		 "desc": "Facilitate a cultural exchange program at {dest}. FPU backing required.",
+		 "primary_stat": "social"},
+		{"type": "refugee_relocation", "title_prefix": "Refugee Relocation", "roles": ["Medic", "Navigator"],
+		 "desc": "Relocate displaced families to {dest}. FPU authorization needed.",
+		 "primary_stat": "social"},
+		{"type": "frontier_medical", "title_prefix": "Frontier Medical Aid", "roles": ["Medic", "Science Officer"],
+		 "desc": "Deliver medical supplies and expertise to {dest}. FPU clearance required.",
+		 "primary_stat": "social"},
+	],
+	"Krellvani": [
+		{"type": "bounty_hunting", "title_prefix": "Bounty Hunt", "roles": ["Security Chief", "Gunner"],
+		 "desc": "Track and apprehend a wanted fugitive near {dest}. Outer Reach contract.",
+		 "primary_stat": "reflexes"},
+		{"type": "contested_salvage", "title_prefix": "Contested Salvage", "roles": ["Engineer", "Security Chief"],
+		 "desc": "Salvage valuable wreckage in disputed space near {dest}. Outer Reach backing needed.",
+		 "primary_stat": "stamina"},
+		{"type": "security_escort", "title_prefix": "Security Escort", "roles": ["Gunner", "Navigator"],
+		 "desc": "Escort a VIP through dangerous territory to {dest}. Outer Reach authorization.",
+		 "primary_stat": "reflexes"},
+	],
+}
+
+
+static func _generate_faction_exclusive(planet_id: int, player_level: int) -> Dictionary:
+	## Creates a faction-exclusive mission for the planet's faction.
+	var planet: Dictionary = DatabaseManager.get_planet(planet_id)
+	if planet.is_empty():
+		return {}
+
+	var faction: String = planet.get("faction", "")
+	if not FACTION_EXCLUSIVE_MISSIONS.has(faction):
+		return {}
+
+	var templates: Array = FACTION_EXCLUSIVE_MISSIONS[faction]
+	var template: Dictionary = templates[randi() % templates.size()]
+	var destinations: Array[int] = _get_reachable_planets(planet_id)
+	if destinations.is_empty():
+		return {}
+
+	var dest_id: int = destinations[randi() % destinations.size()]
+	var dest_planet: Dictionary = DatabaseManager.get_planet(dest_id)
+	var dest_name: String = dest_planet.get("name", "Unknown")
+	var difficulty: int = _pick_difficulty(player_level)
+	var base_reward: int = _calculate_reward(difficulty)
+	var reward: int = int(float(base_reward) * 1.25)  # 25% bonus for faction-exclusive
+
+	return {
+		"planet_id": planet_id,
+		"type": template.type,
+		"destination_id": dest_id,
+		"difficulty": difficulty,
+		"reward": reward,
+		"title": "[Faction] %s — %s" % [template.title_prefix, dest_name],
+		"description": template.desc.replace("{dest}", dest_name),
+		"complications": JSON.stringify(_pick_complications(difficulty)),
+		"roles_tested": JSON.stringify(template.roles),
+	}
+
 
 static func _get_reachable_planets(planet_id: int) -> Array[int]:
 	## Returns planet IDs reachable within 2 hops (not including current planet).

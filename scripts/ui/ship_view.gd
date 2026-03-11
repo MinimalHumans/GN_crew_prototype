@@ -43,7 +43,11 @@ func _build_ui() -> void:
 	header.add_child(title)
 
 	var crew_status: Label = Label.new()
-	crew_status.text = "Crew: %d/%d" % [GameManager.get_crew_count(), GameManager.crew_max]
+	var used_slots: float = GameManager.get_used_crew_slots()
+	if used_slots != float(int(used_slots)):
+		crew_status.text = "Crew: %.1f/%d slots" % [used_slots, GameManager.crew_max]
+	else:
+		crew_status.text = "Crew: %d/%d" % [GameManager.get_crew_count(), GameManager.crew_max]
 	crew_status.add_theme_font_size_override("font_size", 13)
 	header.add_child(crew_status)
 	add_child(header)
@@ -301,6 +305,9 @@ func _show_crew_profile(cm: CrewMember) -> void:
 	trait_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail_panel.add_child(trait_lbl)
 
+	# Active injuries
+	_add_injury_summary(cm)
+
 	# Relationships
 	_add_relationship_summary(cm)
 
@@ -465,6 +472,27 @@ func _make_condition_bars(cm: CrewMember) -> HBoxContainer:
 	row.add_child(loyalty_box)
 
 	return row
+
+
+func _add_injury_summary(cm: CrewMember) -> void:
+	## Adds active injury display if crew member has injuries.
+	if not cm.has_injuries():
+		return
+
+	var inj_header: Label = Label.new()
+	inj_header.text = "Active Injuries:"
+	inj_header.add_theme_font_size_override("font_size", 11)
+	inj_header.add_theme_color_override("font_color", Color(COLOR_BAD))
+	detail_panel.add_child(inj_header)
+
+	var injury_texts: Array[String] = cm.get_injury_text()
+	for inj_text: String in injury_texts:
+		var inj_lbl: Label = Label.new()
+		inj_lbl.text = "  ⚠ %s" % inj_text
+		inj_lbl.add_theme_font_size_override("font_size", 10)
+		inj_lbl.add_theme_color_override("font_color", Color(COLOR_WARN))
+		inj_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		detail_panel.add_child(inj_lbl)
 
 
 func _add_relationship_summary(cm: CrewMember) -> void:

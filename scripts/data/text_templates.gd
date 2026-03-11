@@ -239,6 +239,19 @@ const MISSION_TYPE_DISPLAY: Dictionary = {
 	"escort": "Escort",
 	"patrol": "Patrol",
 	"distress_signal": "Distress Signal",
+	# Faction-exclusive mission types
+	"diplomatic_courier": "Diplomatic Courier",
+	"trade_regulation": "Trade Regulation Audit",
+	"census_survey": "Census Survey",
+	"technical_recovery": "Technical Recovery",
+	"deep_mining": "Deep Mining Op",
+	"research_transport": "Research Data Transport",
+	"cultural_exchange": "Cultural Exchange",
+	"refugee_relocation": "Refugee Relocation",
+	"frontier_medical": "Frontier Medical Aid",
+	"bounty_hunting": "Bounty Hunt",
+	"contested_salvage": "Contested Salvage",
+	"security_escort": "Security Escort",
 }
 
 const MISSION_TYPE_VERB: Dictionary = {
@@ -286,6 +299,19 @@ const MISSION_PRIMARY_STAT: Dictionary = {
 	"escort": "reflexes",
 	"patrol": "stamina",
 	"distress_signal": "resourcefulness",
+	# Faction-exclusive mission types
+	"diplomatic_courier": "social",
+	"trade_regulation": "cognition",
+	"census_survey": "cognition",
+	"technical_recovery": "cognition",
+	"deep_mining": "stamina",
+	"research_transport": "cognition",
+	"cultural_exchange": "social",
+	"refugee_relocation": "social",
+	"frontier_medical": "social",
+	"bounty_hunting": "reflexes",
+	"contested_salvage": "stamina",
+	"security_escort": "reflexes",
 }
 
 const MISSION_ROLES: Dictionary = {
@@ -297,6 +323,19 @@ const MISSION_ROLES: Dictionary = {
 	"escort": ["Gunner", "Navigator"],
 	"patrol": ["Security Chief", "Gunner"],
 	"distress_signal": ["Medic", "Engineer", "Security Chief"],
+	# Faction-exclusive mission types
+	"diplomatic_courier": ["Comms Officer", "Navigator"],
+	"trade_regulation": ["Comms Officer", "Science Officer"],
+	"census_survey": ["Science Officer", "Navigator"],
+	"technical_recovery": ["Engineer", "Security Chief"],
+	"deep_mining": ["Engineer", "Navigator"],
+	"research_transport": ["Science Officer", "Navigator"],
+	"cultural_exchange": ["Comms Officer", "Medic"],
+	"refugee_relocation": ["Medic", "Navigator"],
+	"frontier_medical": ["Medic", "Science Officer"],
+	"bounty_hunting": ["Security Chief", "Gunner"],
+	"contested_salvage": ["Engineer", "Security Chief"],
+	"security_escort": ["Gunner", "Navigator"],
 }
 
 # === LEVEL-UP TEXT ===
@@ -375,6 +414,29 @@ const MISSION_OUTCOME_TEXT: Dictionary = {
 		"Everything that could go wrong did. You're lucky to be alive.",
 		"Total loss. No payment. Your ship is battered.",
 	],
+}
+
+
+# === FACTION ACCESS TEXT ===
+
+const FACTION_ACCESS_TEXT: Dictionary = {
+	"outsider": [
+		"The locals at {planet} eye your ship warily. No {faction} crew — you're clearly outsiders.",
+		"Prices are steeper here without a {faction} contact. The dockmaster makes that clear.",
+		"You feel the cold shoulder at {planet}. Outsiders pay a premium in {faction} space.",
+	],
+	"insider": [
+		"Your {faction} crew member exchanges nods with the dockworkers. You're among friends at {planet}.",
+		"Having {faction} crew opens doors at {planet}. Better deals, better missions.",
+		"The locals at {planet} warm up when they see your crew. {faction} connections matter here.",
+	],
+}
+
+const FACTION_HEX_COLORS: Dictionary = {
+	"Human": "#4A90D9",
+	"Gorvian": "#C73636",
+	"Vellani": "#4CAF50",
+	"Krellvani": "#BF8C33",
 }
 
 
@@ -474,3 +536,16 @@ static func get_dismiss_text(crew_name: String) -> String:
 	var variants: Array = RECRUIT_DISMISS_TEXT
 	var text: String = variants[randi() % variants.size()]
 	return text.replace("{name}", crew_name)
+
+
+static func get_faction_access_text(access_type: String, planet_name: String, faction: String) -> String:
+	## Returns faction access arrival text (outsider or insider).
+	if FACTION_ACCESS_TEXT.has(access_type):
+		var variants: Array = FACTION_ACCESS_TEXT[access_type]
+		var text: String = variants[randi() % variants.size()]
+		return text.replace("{planet}", planet_name).replace("{faction}", faction)
+	return ""
+
+
+static func get_faction_hex_color(faction: String) -> String:
+	return FACTION_HEX_COLORS.get(faction, "#718096")
