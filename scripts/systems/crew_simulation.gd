@@ -1,7 +1,8 @@
 class_name CrewSimulation
 ## CrewSimulation — Central crew simulation engine.
 ## Ticks once per jump during travel and once on planet arrival.
-## Processes needs, morale drift, fatigue, and relationship shifts.
+## Processes needs, morale drift, fatigue, relationship shifts,
+## skill progression, memory triggers, trait acquisition, and ship memories.
 
 
 # === MORALE NEED MODIFIERS ===
@@ -24,7 +25,9 @@ static func _get_food_modifier(cm: CrewMember, food_supply: float, crew_count: i
 		modifier = -20.0
 	elif days_remaining <= 3.0:
 		modifier = -5.0
-	# else neutral
+	# Iron Stomach trait: reduce food morale penalty by 50%
+	if cm.has_trait("iron_stomach") and modifier < 0.0:
+		modifier *= 0.5
 	# Comfort food bonus
 	if cm.comfort_food_ticks > 0:
 		modifier += 3.0
@@ -57,6 +60,9 @@ static func _get_safety_modifier() -> float:
 
 static func _get_purpose_modifier(cm: CrewMember) -> float:
 	## Based on ticks since role was last exercised.
+	# Haunted trait: purpose is always satisfied
+	if cm.has_trait("haunted"):
+		return 5.0
 	if cm.ticks_since_role_used < 5:
 		return 3.0
 	elif cm.ticks_since_role_used <= 15:
@@ -98,11 +104,14 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 
 	# Process each crew member
 	for cm: CrewMember in roster:
+		# Load memories for context-based modifiers
+		cm.load_memories()
+
 		# --- Fatigue ---
 		var fatigue_delta: float
+		var role_str: String = CrewMember._role_to_string(cm.role)
 		if had_encounter:
 			# Check if this crew member's role was tested
-			var role_str: String = CrewMember._role_to_string(cm.role)
 			if role_str in roles_tested:
 				fatigue_delta = 5.0 + float(encounter_difficulty) * 2.0
 				fatigue_delta = clampf(fatigue_delta, 5.0, 15.0)
@@ -120,8 +129,32 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		if cm.comfort_food_ticks > 0:
 			cm.comfort_food_ticks -= 1
 
-		# --- Morale bonus (permanent, from bonding breakthrough etc.) ---
-		# Applied as a constant positive modifier each tick
+		# --- Phase 4.1: Skill progression ---
+		var old_label: String = cm.get_growth_label()
+		if role_str in roles_tested:
+			cm.add_role_experience(3.0)
+		elif not had_encounter:
+			cm.add_role_experience(0.1)  # Passive maintenance
+
+		# Track combat encounters for Battle-Tested trait
+		if had_encounter and encounter_was_combat:
+			cm.combat_encounter_count += 1
+
+		# Track total jumps for Spacer's Instinct trait
+		cm.total_jumps += 1
+		cm.docked_ticks = 0  # Reset docked counter on jump
+
+		# Track low food ticks for Iron Stomach trait
+		var food_per_jump: float = 1.0 + float(crew_count)
+		var food_days: float = GameManager.food_supply / maxf(food_per_jump, 1.0)
+		if food_days < 3.0:
+			cm.low_food_ticks += 1
+
+		# Emit skill growth signal on label change
+		var new_label: String = cm.get_growth_label()
+		if new_label != old_label:
+			events.append("[color=#E6D159]%s has grown as a %s — now %s.[/color]" % [cm.crew_name, cm.get_role_name(), new_label])
+			EventBus.crew_skill_gained.emit(cm.id, cm.crew_name, new_label)
 
 		# --- Krellvani claustrophobia on Corvette ---
 		if cm.species == CrewMember.Species.KRELLVANI and GameManager.ship_class == "corvette":
@@ -129,6 +162,13 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			if not GameManager.claustrophobia_logged.has(cm.id):
 				events.append("[color=#E67E22]%s is uncomfortable — Krellvani don't do well in tight quarters.[/color]" % cm.crew_name)
 				GameManager.claustrophobia_logged[cm.id] = true
+
+		# --- Phase 4.3: Trait morale effects ---
+		# Haunted: periodic morale dip every 15 ticks
+		if cm.has_trait("haunted") and cm.total_jumps % 15 == 0:
+			cm.morale = maxf(0.0, cm.morale - 3.0)
+
+		# Spacer's Instinct: already handled via docked_ticks (see tick_planet_arrival)
 
 		# --- Morale drift ---
 		var modifier_sum: float = 0.0
@@ -139,6 +179,10 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		modifier_sum += _get_purpose_modifier(cm)
 		modifier_sum += _get_relationship_modifier(cm.id)
 		modifier_sum += cm.morale_bonus  # Permanent bonus (e.g., bonding breakthrough)
+
+		# Phase 4.2: Memory-based morale context
+		var context: String = _get_current_context(had_encounter, encounter_was_combat)
+		modifier_sum += cm.get_memory_morale_modifier(context)
 
 		# Calculate target morale and drift toward it
 		var target: float = clampf(cm.morale + modifier_sum, 0.0, 100.0)
@@ -157,6 +201,18 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		for recovery_text: String in recovered:
 			events.append("[color=#27AE60]%s[/color]" % recovery_text)
 
+		# --- Phase 4.2: Hull near-death memory trigger ---
+		if had_encounter and encounter_was_combat:
+			if float(GameManager.hull_current) < 0.25 * float(GameManager.hull_max):
+				_try_create_combat_memory(cm, "near_death")
+
+		# --- Phase 4.3: Trait acquisition checks ---
+		var trait_events: Array[String] = _check_trait_acquisition(cm, roster)
+		events.append_array(trait_events)
+
+		# --- Phase 4.4: Ship culture scaling ---
+		_scale_ship_culture(cm)
+
 		# --- Persist crew state ---
 		DatabaseManager.update_crew_member(cm.id, {
 			"morale": cm.morale,
@@ -164,7 +220,20 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			"ticks_since_role_used": cm.ticks_since_role_used,
 			"comfort_food_ticks": cm.comfort_food_ticks,
 			"injuries": JSON.stringify(cm.injuries),
+			"role_experience": cm.role_experience,
+			"pinch_hit_experience": JSON.stringify(cm.pinch_hit_experience),
+			"combat_encounter_count": cm.combat_encounter_count,
+			"total_jumps": cm.total_jumps,
+			"low_food_ticks": cm.low_food_ticks,
+			"total_injuries_sustained": cm.total_injuries_sustained,
+			"docked_ticks": cm.docked_ticks,
+			"traits": JSON.stringify(cm.traits),
 		})
+
+	# --- Phase 4.4: Ship memory triggers ---
+	if had_encounter and encounter_was_combat:
+		var ship_events: Array[String] = _check_ship_memory_triggers(roster)
+		events.append_array(ship_events)
 
 	# --- Relationship shifts ---
 	var rel_events: Array[String] = _process_relationships_tick(roster, had_encounter, encounter_was_combat, roles_tested)
@@ -202,6 +271,13 @@ static func tick_planet_arrival() -> Array[String]:
 		var old_fatigue: float = cm.fatigue
 		cm.fatigue = maxf(0.0, cm.fatigue - 8.0)
 
+		# Track docked ticks for Spacer's Instinct restlessness
+		cm.docked_ticks += 1
+
+		# Spacer's Instinct: restless when docked > 5 ticks
+		if cm.has_trait("spacers_instinct") and cm.docked_ticks > 5:
+			cm.morale = maxf(0.0, cm.morale - 2.0)
+
 		# Check for comfort food: did we buy food at a planet matching this crew's faction?
 		var planet: Dictionary = GameManager.get_current_planet()
 		if GameManager.last_food_planet_id == GameManager.current_planet_id:
@@ -210,10 +286,32 @@ static func tick_planet_arrival() -> Array[String]:
 				cm.comfort_food_ticks = 10
 				events.append("[color=#4CAF50]%s grins at the sight of proper %s food.[/color]" % [cm.crew_name, species_name])
 
+		# Phase 4.2: First faction homeworld visit memory
+		cm.load_memories()
+		var planet_faction: String = planet.get("faction", "")
+		if cm.get_species_name() == planet_faction:
+			# Check if this is the first visit to any planet of their faction
+			var has_homeworld_memory: bool = false
+			for mem: Dictionary in cm.memories:
+				if mem.get("context_match", "").begins_with("faction_homeworld"):
+					has_homeworld_memory = true
+					break
+			if not has_homeworld_memory:
+				_create_memory(cm, {
+					"trigger_text": "First visit to %s — %s space" % [planet.get("name", "unknown"), planet_faction],
+					"emotional_tag": "GRATEFUL",
+					"modifier_type": "MORALE_IN_CONTEXT",
+					"modifier_value": 5.0,
+					"context_match": "faction_homeworld_%s" % planet_faction.to_lower(),
+					"significance": 2.0,
+				})
+				events.append("[color=#4CAF50]%s is moved by the visit to %s. It feels like coming home.[/color]" % [cm.crew_name, planet.get("name", "unknown")])
+
 		# Persist
 		DatabaseManager.update_crew_member(cm.id, {
 			"fatigue": cm.fatigue,
 			"comfort_food_ticks": cm.comfort_food_ticks,
+			"docked_ticks": cm.docked_ticks,
 		})
 
 		# Log notable fatigue recovery
@@ -266,6 +364,16 @@ static func _process_relationships_tick(roster: Array[CrewMember], had_encounter
 			if role_a in roles_tested and role_b in roles_tested:
 				delta += 2.0
 
+			# Phase 4.3: Peacemaker trait relationship drift bonus
+			if cm_a.has_trait("peacemaker") or cm_b.has_trait("peacemaker"):
+				delta += 2.0
+
+			# Phase 4.4: Ship memory cohesion bonus
+			var ship_mems: Array = DatabaseManager.get_ship_memories(GameManager.save_id)
+			for smem: Dictionary in ship_mems:
+				if smem.get("modifier_type", "") == "COHESION":
+					delta += smem.get("modifier_value", 0.0)
+
 			# Quiet jump social interaction (15% chance per pair)
 			if not had_encounter and randf() < 0.15:
 				var social_delta: float = _calculate_social_interaction(cm_a, cm_b)
@@ -297,6 +405,11 @@ static func _process_relationships_tick(roster: Array[CrewMember], had_encounter
 				var breakthrough_event: String = _check_bonding_breakthrough(cm_a, cm_b, new_val)
 				if breakthrough_event != "":
 					events.append(breakthrough_event)
+
+				# Phase 4.3: Bonded Pair trait check
+				if new_val > 80.0:
+					if not cm_a.has_trait("bonded_pair") and not cm_b.has_trait("bonded_pair"):
+						_award_bonded_pair(cm_a, cm_b, events)
 
 	return events
 
@@ -371,6 +484,20 @@ static func process_mission_result(outcome_tier: String, roles_tested: Array) ->
 				if absf(delta) > 0.01:
 					var new_val: float = clampf(current_val + delta, -100.0, 100.0)
 					DatabaseManager.update_relationship(cm_a.id, cm_b.id, new_val)
+
+	# Phase 4.1: Secondary role experience gain
+	for cm: CrewMember in roster:
+		var role_str: String = CrewMember._role_to_string(cm.role)
+		if role_str in roles_tested:
+			# Secondary role gets +1.5 (primary already got +3.0 in tick_jump)
+			cm.add_role_experience(1.5)
+			DatabaseManager.update_crew_member(cm.id, {
+				"ticks_since_role_used": 0,
+				"role_experience": cm.role_experience,
+			})
+		else:
+			# Not tested but just update ticks
+			pass
 
 	# Record dangerous event if failure
 	if is_failure:
@@ -465,3 +592,367 @@ static func _check_bonding_breakthrough(cm_a: CrewMember, cm_b: CrewMember, rel_
 	if pair_key == "GORVIAN_KRELLVANI":
 		return "[color=#E6D159]Breakthrough! %s and %s have bridged the divide between Gorvian and Krellvani. Their bond strengthens the entire crew. (+3 permanent morale)[/color]" % [cm_a.crew_name, cm_b.crew_name]
 	return "[color=#E6D159]%s and %s have formed a deep bond across species lines. (+3 permanent morale)[/color]" % [cm_a.crew_name, cm_b.crew_name]
+
+
+# === PHASE 4.2: MEMORY SYSTEM ===
+
+static func _get_current_context(had_encounter: bool, encounter_was_combat: bool) -> String:
+	## Returns a context string for the current game state.
+	if encounter_was_combat:
+		return "combat"
+	elif had_encounter:
+		return "encounter"
+	return "travel"
+
+
+static func _create_memory(cm: CrewMember, data: Dictionary) -> void:
+	## Creates a memory for a crew member, enforcing the 6-memory cap.
+	var day: int = GameManager.day_count
+	data["day_acquired"] = day
+
+	# Check memory cap
+	var count: int = DatabaseManager.get_crew_memory_count(cm.id)
+	if count >= 6:
+		# Find and remove least significant memory
+		var all_mems: Array = DatabaseManager.get_crew_memories(cm.id)
+		var worst_id: int = -1
+		var worst_score: float = 999999.0
+		for mem: Dictionary in all_mems:
+			if mem.get("is_ship_culture", 0) == 1:
+				continue  # Don't replace ship culture memories
+			var age: float = maxf(1.0, float(day - mem.get("day_acquired", day)))
+			var score: float = mem.get("significance", 1.0) / age
+			if score < worst_score:
+				worst_score = score
+				worst_id = mem.get("id", -1)
+		if worst_id > 0:
+			DatabaseManager.delete_crew_memory(worst_id)
+
+	DatabaseManager.insert_crew_memory(cm.id, data)
+	cm.load_memories()  # Refresh cache
+	EventBus.crew_memory_formed.emit(cm.id, cm.crew_name, data.get("trigger_text", ""))
+
+
+static func _try_create_combat_memory(cm: CrewMember, context_type: String) -> void:
+	## Creates a combat-related memory based on crew stats.
+	# Only create near-death memories once per battle (check if already has one this day)
+	for mem: Dictionary in cm.memories:
+		if mem.get("day_acquired", 0) == GameManager.day_count and mem.get("context_match", "") == context_type:
+			return  # Already created this tick
+
+	var tag: String
+	var modifier_val: float
+	if cm.stamina > 55:
+		tag = "HARDENED"
+		modifier_val = 5.0
+	else:
+		tag = "SHAKEN"
+		modifier_val = -5.0
+
+	var planet_name: String = GameManager.get_current_planet().get("name", "deep space")
+	_create_memory(cm, {
+		"trigger_text": "Survived a near-death battle near %s" % planet_name,
+		"emotional_tag": tag,
+		"modifier_type": "COMBAT_PERFORMANCE",
+		"modifier_value": modifier_val,
+		"context_match": "combat",
+		"significance": 3.0,
+	})
+
+
+static func create_challenge_memory(cm: CrewMember, outcome_tier: String, role_name: String,
+		encounter_type: String) -> void:
+	## Called from ChallengeResolver after challenge resolution.
+	var context: String = _role_to_memory_context(role_name)
+	var planet_name: String = GameManager.get_current_planet().get("name", "deep space")
+
+	if outcome_tier == "critical_success":
+		var tag: String = "INSPIRED" if cm.social > 55 else "PROUD"
+		var val: float = randf_range(5.0, 10.0)
+		_create_memory(cm, {
+			"trigger_text": "Critical success during %s near %s" % [encounter_type, planet_name],
+			"emotional_tag": tag,
+			"modifier_type": context,
+			"modifier_value": val,
+			"context_match": encounter_type,
+			"significance": 3.0,
+		})
+	elif outcome_tier == "critical_failure":
+		var tag: String
+		var val: float
+		if cm.stamina > 55:
+			tag = "HARDENED"
+			val = 5.0
+		elif cm.cognition > 55:
+			tag = "CAUTIOUS"
+			val = 3.0
+		else:
+			tag = "SHAKEN"
+			val = -5.0
+		_create_memory(cm, {
+			"trigger_text": "Critical failure during %s near %s" % [encounter_type, planet_name],
+			"emotional_tag": tag,
+			"modifier_type": context,
+			"modifier_value": val,
+			"context_match": encounter_type,
+			"significance": 3.0,
+		})
+
+
+static func create_injury_memory(cm: CrewMember, severity: String) -> void:
+	## Called when a crew member is injured.
+	cm.total_injuries_sustained += 1
+	DatabaseManager.update_crew_member(cm.id, {"total_injuries_sustained": cm.total_injuries_sustained})
+
+	# Only create memories for moderate+ injuries
+	if severity == "minor":
+		return
+
+	var tag: String = "HARDENED" if cm.stamina > 55 else "SHAKEN"
+	var planet_name: String = GameManager.get_current_planet().get("name", "deep space")
+	_create_memory(cm, {
+		"trigger_text": "Injured during an encounter near %s" % planet_name,
+		"emotional_tag": tag,
+		"modifier_type": "COMBAT_PERFORMANCE",
+		"modifier_value": 3.0 if tag == "HARDENED" else -3.0,
+		"context_match": "combat",
+		"significance": 2.0 if severity == "moderate" else 3.0,
+	})
+
+
+static func create_witness_injury_memory(cm: CrewMember, injured_name: String) -> void:
+	## Called when a crew member witnesses another getting injured.
+	var tag: String = "CAUTIOUS" if cm.social > 55 else "HARDENED"
+	_create_memory(cm, {
+		"trigger_text": "Watched %s get hurt in battle" % injured_name,
+		"emotional_tag": tag,
+		"modifier_type": "SCAN_PERFORMANCE" if tag == "CAUTIOUS" else "COMBAT_PERFORMANCE",
+		"modifier_value": 3.0,
+		"context_match": "combat",
+		"significance": 1.5,
+	})
+
+
+static func _role_to_memory_context(role_name: String) -> String:
+	## Maps role names to memory modifier type contexts.
+	match role_name:
+		"Gunner", "Security Chief":
+			return "COMBAT_PERFORMANCE"
+		"Navigator":
+			return "NAVIGATION_PERFORMANCE"
+		"Science Officer":
+			return "SCAN_PERFORMANCE"
+		"Comms Officer":
+			return "SOCIAL_PERFORMANCE"
+		_:
+			return "COMBAT_PERFORMANCE"
+
+
+# === PHASE 4.3: TRAIT ACQUISITION ===
+
+static func _check_trait_acquisition(cm: CrewMember, roster: Array[CrewMember]) -> Array[String]:
+	## Checks all trait acquisition conditions for a crew member.
+	## Returns event text for any newly acquired traits.
+	var events: Array[String] = []
+
+	# Battle-Tested: 10+ combat encounters
+	if not cm.has_trait("battle_tested") and cm.combat_encounter_count >= 10:
+		_award_trait(cm, "battle_tested", events)
+
+	# Spacer's Instinct: 100+ total jumps
+	if not cm.has_trait("spacers_instinct") and cm.total_jumps >= 100:
+		_award_trait(cm, "spacers_instinct", events)
+
+	# Iron Stomach: 20+ low food ticks
+	if not cm.has_trait("iron_stomach") and cm.low_food_ticks >= 20:
+		_award_trait(cm, "iron_stomach", events)
+
+	# Peacemaker: Social > 65 and 3+ conflicts mediated
+	if not cm.has_trait("peacemaker") and cm.social > 65 and cm.conflicts_mediated >= 3:
+		_award_trait(cm, "peacemaker", events)
+
+	# Scarred: had severe injury (30+ tick recovery)
+	for injury: Dictionary in cm.injuries:
+		if injury.get("ticks_remaining", 0) >= 25 and not cm.has_trait("scarred"):
+			_award_trait(cm, "scarred", events)
+			break
+
+	# Grudge-Bearer: any relationship < -80
+	if not cm.has_trait("grudge_bearer"):
+		var rels: Array = DatabaseManager.get_crew_relationships(cm.id)
+		for rel: Dictionary in rels:
+			if rel.get("value", 0.0) < -80.0:
+				_award_trait(cm, "grudge_bearer", events)
+				break
+
+	# Haunted: 3+ SHAKEN memories
+	if not cm.has_trait("haunted") and cm.count_memories_with_tag("SHAKEN") >= 3:
+		_award_trait(cm, "haunted", events)
+
+	# Reckless: 3+ HARDENED combat memories
+	if not cm.has_trait("reckless"):
+		var hardened_combat: int = 0
+		for mem: Dictionary in cm.memories:
+			if mem.get("emotional_tag", "") == "HARDENED" and mem.get("context_match", "") == "combat":
+				hardened_combat += 1
+		if hardened_combat >= 3:
+			_award_trait(cm, "reckless", events)
+
+	return events
+
+
+static func _award_trait(cm: CrewMember, trait_id: String, events: Array[String]) -> void:
+	## Awards a trait to a crew member and generates event text.
+	cm.traits.append(trait_id)
+	DatabaseManager.update_crew_member(cm.id, {"traits": JSON.stringify(cm.traits)})
+
+	var tdef: Dictionary = CrewMember.TRAIT_DEFINITIONS.get(trait_id, {})
+	var text: String = tdef.get("acquisition_text", "%s acquired a new trait." % cm.crew_name)
+	text = text.replace("{name}", cm.crew_name)
+	events.append("[color=#E6D159][b]Trait Acquired:[/b] %s — %s[/color]" % [tdef.get("name", trait_id), text])
+
+	EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, trait_id, tdef.get("name", trait_id))
+
+
+static func _award_bonded_pair(cm_a: CrewMember, cm_b: CrewMember, events: Array[String]) -> void:
+	## Awards the Bonded Pair trait to both crew members.
+	cm_a.traits.append("bonded_pair")
+	cm_b.traits.append("bonded_pair")
+	DatabaseManager.update_crew_member(cm_a.id, {"traits": JSON.stringify(cm_a.traits)})
+	DatabaseManager.update_crew_member(cm_b.id, {"traits": JSON.stringify(cm_b.traits)})
+
+	var tdef: Dictionary = CrewMember.TRAIT_DEFINITIONS.get("bonded_pair", {})
+	var text: String = tdef.get("acquisition_text", "").replace("{a}", cm_a.crew_name).replace("{b}", cm_b.crew_name)
+	events.append("[color=#E6D159][b]Trait Acquired:[/b] Bonded Pair — %s[/color]" % text)
+
+	EventBus.crew_trait_acquired.emit(cm_a.id, cm_a.crew_name, "bonded_pair", "Bonded Pair")
+	EventBus.crew_trait_acquired.emit(cm_b.id, cm_b.crew_name, "bonded_pair", "Bonded Pair")
+
+
+# === PHASE 4.4: SHIP MEMORIES ===
+
+static func _check_ship_memory_triggers(roster: Array[CrewMember]) -> Array[String]:
+	## Checks for ship-wide memory triggers after combat encounters.
+	var events: Array[String] = []
+
+	# Near-death battle: hull < 15%
+	if float(GameManager.hull_current) < 0.15 * float(GameManager.hull_max):
+		# Check if we already have a ship memory from today
+		var existing: Array = DatabaseManager.get_ship_memories(GameManager.save_id)
+		var already_has: bool = false
+		for smem: Dictionary in existing:
+			if smem.get("day_acquired", 0) == GameManager.day_count:
+				already_has = true
+				break
+
+		if not already_has:
+			var planet_name: String = GameManager.get_current_planet().get("name", "deep space")
+			var mem_data: Dictionary = {
+				"event_description": "The Battle of %s" % planet_name,
+				"modifier_type": "COHESION",
+				"modifier_value": 1.0,  # +1 relationship drift per tick
+				"context_match": "combat",
+				"day_acquired": GameManager.day_count,
+			}
+			DatabaseManager.insert_ship_memory(GameManager.save_id, mem_data)
+			events.append("[color=#E6D159][b]Ship Memory:[/b] The Battle of %s — the crew survived a near-death engagement. This shared trauma binds them together.[/color]" % planet_name)
+			EventBus.ship_memory_formed.emit(mem_data.event_description)
+
+			# Cap ship memories at 10
+			_cap_ship_memories()
+
+	return events
+
+
+static func check_mission_ship_memory(outcome_tier: String, mission_data: Dictionary) -> Array[String]:
+	## Called after mission resolution for ship memory triggers.
+	var events: Array[String] = []
+	var planet_name: String = GameManager.get_current_planet().get("name", "deep space")
+
+	# Faction betrayal: critical failure on faction mission
+	if outcome_tier == "critical_failure":
+		var planet: Dictionary = GameManager.get_current_planet()
+		var faction: String = planet.get("faction", "Unknown")
+		var mem_data: Dictionary = {
+			"event_description": "Betrayed by %s" % faction,
+			"modifier_type": "FACTION_REACTION",
+			"modifier_value": -5.0,
+			"context_match": "faction_%s" % faction.to_lower(),
+			"day_acquired": GameManager.day_count,
+		}
+		DatabaseManager.insert_ship_memory(GameManager.save_id, mem_data)
+		events.append("[color=#C0392B][b]Ship Memory:[/b] Betrayed by %s — the crew won't forget what happened at %s.[/color]" % [faction, planet_name])
+		EventBus.ship_memory_formed.emit(mem_data.event_description)
+		_cap_ship_memories()
+
+	# Extraordinary discovery: Science Officer critical success on survey
+	if outcome_tier == "critical_success":
+		var mission_type: String = mission_data.get("mission_type", mission_data.get("type", ""))
+		if mission_type == "survey":
+			var mem_data: Dictionary = {
+				"event_description": "The %s Discovery" % planet_name,
+				"modifier_type": "SCAN_PERFORMANCE",
+				"modifier_value": 3.0,
+				"context_match": "survey",
+				"day_acquired": GameManager.day_count,
+			}
+			DatabaseManager.insert_ship_memory(GameManager.save_id, mem_data)
+			events.append("[color=#E6D159][b]Ship Memory:[/b] The %s Discovery — extraordinary findings during the survey. The crew still talks about it.[/color]" % planet_name)
+			EventBus.ship_memory_formed.emit(mem_data.event_description)
+			_cap_ship_memories()
+
+	return events
+
+
+static func check_catastrophic_loss(roster: Array[CrewMember], injured_count: int) -> Array[String]:
+	## Called when multiple crew are injured in the same event.
+	var events: Array[String] = []
+	if injured_count >= 2:
+		var planet_name: String = GameManager.get_current_planet().get("name", "deep space")
+		var mem_data: Dictionary = {
+			"event_description": "The %s Disaster" % planet_name,
+			"modifier_type": "SCAN_PERFORMANCE",
+			"modifier_value": 5.0,
+			"context_match": "safety",
+			"day_acquired": GameManager.day_count,
+		}
+		DatabaseManager.insert_ship_memory(GameManager.save_id, mem_data)
+		events.append("[color=#C0392B][b]Ship Memory:[/b] The %s Disaster — multiple crew injured. The ship is more cautious now.[/color]" % planet_name)
+		EventBus.ship_memory_formed.emit(mem_data.event_description)
+		_cap_ship_memories()
+
+	return events
+
+
+static func _cap_ship_memories() -> void:
+	## Removes oldest ship memories if count exceeds 10.
+	var all_mems: Array = DatabaseManager.get_ship_memories(GameManager.save_id)
+	while all_mems.size() > 10:
+		# Remove the oldest (lowest day_acquired)
+		var oldest_id: int = all_mems[0].get("id", -1)
+		var oldest_day: int = all_mems[0].get("day_acquired", 999999)
+		for mem: Dictionary in all_mems:
+			if mem.get("day_acquired", 999999) < oldest_day:
+				oldest_day = mem.get("day_acquired", 999999)
+				oldest_id = mem.get("id", -1)
+		if oldest_id > 0:
+			DatabaseManager.db.query_with_bindings("DELETE FROM ship_memories WHERE id = ?", [oldest_id])
+		all_mems = DatabaseManager.get_ship_memories(GameManager.save_id)
+
+
+static func _scale_ship_culture(cm: CrewMember) -> void:
+	## Scales ship culture memory modifiers from 30% to 60% after 20 ticks aboard.
+	if cm.id <= 0:
+		return
+	var ticks_aboard: int = GameManager.day_count - cm.hired_day
+	if ticks_aboard < 20:
+		return
+	# Check for unscaled ship culture memories
+	for mem: Dictionary in cm.memories:
+		if mem.get("is_ship_culture", 0) == 1 and mem.get("culture_scaled", 0) == 0:
+			# Double the modifier (from 30% to 60% of original)
+			var new_val: float = mem.get("modifier_value", 0.0) * 2.0
+			DatabaseManager.db.query_with_bindings(
+				"UPDATE crew_memories SET modifier_value = ?, culture_scaled = 1 WHERE id = ?",
+				[new_val, mem.get("id", -1)]
+			)

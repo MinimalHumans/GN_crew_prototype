@@ -236,6 +236,39 @@ func _create_tables() -> void:
 		)
 	""")
 
+	# Phase 4 tables
+	db.query("""
+		CREATE TABLE IF NOT EXISTS crew_memories (
+			id INTEGER PRIMARY KEY,
+			crew_id INTEGER NOT NULL,
+			trigger_text TEXT NOT NULL,
+			emotional_tag TEXT NOT NULL,
+			modifier_type TEXT NOT NULL,
+			modifier_value REAL DEFAULT 0.0,
+			context_match TEXT DEFAULT '',
+			day_acquired INTEGER DEFAULT 1,
+			significance REAL DEFAULT 1.0,
+			is_ship_culture INTEGER DEFAULT 0,
+			culture_scaled INTEGER DEFAULT 0,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (crew_id) REFERENCES crew_members(id)
+		)
+	""")
+
+	db.query("""
+		CREATE TABLE IF NOT EXISTS ship_memories (
+			id INTEGER PRIMARY KEY,
+			save_id INTEGER NOT NULL,
+			event_description TEXT NOT NULL,
+			modifier_type TEXT NOT NULL,
+			modifier_value REAL DEFAULT 0.0,
+			context_match TEXT DEFAULT '',
+			day_acquired INTEGER DEFAULT 1,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (save_id) REFERENCES save_state(id)
+		)
+	""")
+
 
 # === SEED DATA ===
 
@@ -610,10 +643,13 @@ func update_cargo(save_id: int, commodity_id: int, quantity: int) -> void:
 
 func delete_save(save_id: int) -> void:
 	## Deletes a save and all associated data.
-	# Delete crew relationships first (they reference crew_members)
+	# Delete crew memories and relationships first (they reference crew_members)
 	var crew_ids: Array = db.select_rows("crew_members", "save_id = %d" % save_id, ["id"])
 	for crew: Dictionary in crew_ids:
 		db.query_with_bindings("DELETE FROM crew_relationships WHERE crew_a_id = ? OR crew_b_id = ?", [crew.id, crew.id])
+		db.query_with_bindings("DELETE FROM crew_memories WHERE crew_id = ?", [crew.id])
+	# Delete ship memories
+	db.query_with_bindings("DELETE FROM ship_memories WHERE save_id = ?", [save_id])
 	for table: String in ["crew_members", "cargo", "missions_active", "visited_planets", "ships", "captain_stats"]:
 		db.query_with_bindings("DELETE FROM %s WHERE save_id = ?" % table, [save_id])
 	db.query_with_bindings("DELETE FROM save_state WHERE id = ?", [save_id])
@@ -680,6 +716,17 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("planets", "cold_environment", "INTEGER DEFAULT 0")
 	_add_column_if_missing("planets", "is_neutral", "INTEGER DEFAULT 0")
 	_add_column_if_missing("crew_relationships", "bonding_breakthrough", "INTEGER DEFAULT 0")
+	# Phase 4: Skill progression
+	_add_column_if_missing("crew_members", "role_experience", "REAL DEFAULT 0.0")
+	_add_column_if_missing("crew_members", "pinch_hit_experience", "TEXT DEFAULT '{}'")
+	# Phase 4: Trait tracking
+	_add_column_if_missing("crew_members", "traits", "TEXT DEFAULT '[]'")
+	_add_column_if_missing("crew_members", "combat_encounter_count", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "total_jumps", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "low_food_ticks", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "conflicts_mediated", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "total_injuries_sustained", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "docked_ticks", "INTEGER DEFAULT 0")
 	# Seed Phase 3 planet flags
 	_seed_phase3_planet_flags()
 
@@ -921,3 +968,53 @@ func update_bonding_breakthrough(crew_a_id: int, crew_b_id: int) -> void:
 func delete_crew_relationships(crew_id: int) -> void:
 	## Removes all relationship rows involving this crew member.
 	db.query_with_bindings("DELETE FROM crew_relationships WHERE crew_a_id = ? OR crew_b_id = ?", [crew_id, crew_id])
+
+
+# === CREW MEMORIES (Phase 4) ===
+
+func insert_crew_memory(crew_id: int, data: Dictionary) -> void:
+	db.query_with_bindings(
+		"INSERT INTO crew_memories (crew_id, trigger_text, emotional_tag, modifier_type, modifier_value, context_match, day_acquired, significance, is_ship_culture, culture_scaled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[crew_id, data.get("trigger_text", ""), data.get("emotional_tag", ""),
+		 data.get("modifier_type", ""), data.get("modifier_value", 0.0),
+		 data.get("context_match", ""), data.get("day_acquired", 1),
+		 data.get("significance", 1.0), data.get("is_ship_culture", 0),
+		 data.get("culture_scaled", 0)]
+	)
+
+
+func get_crew_memories(crew_id: int) -> Array:
+	return db.select_rows("crew_memories", "crew_id = %d" % crew_id, ["*"])
+
+
+func get_crew_memory_count(crew_id: int) -> int:
+	var rows: Array = db.select_rows("crew_memories", "crew_id = %d" % crew_id, ["id"])
+	return rows.size()
+
+
+func delete_crew_memory(memory_id: int) -> void:
+	db.query_with_bindings("DELETE FROM crew_memories WHERE id = ?", [memory_id])
+
+
+func delete_all_crew_memories(crew_id: int) -> void:
+	db.query_with_bindings("DELETE FROM crew_memories WHERE crew_id = ?", [crew_id])
+
+
+# === SHIP MEMORIES (Phase 4) ===
+
+func insert_ship_memory(save_id: int, data: Dictionary) -> void:
+	db.query_with_bindings(
+		"INSERT INTO ship_memories (save_id, event_description, modifier_type, modifier_value, context_match, day_acquired) VALUES (?, ?, ?, ?, ?, ?)",
+		[save_id, data.get("event_description", ""), data.get("modifier_type", ""),
+		 data.get("modifier_value", 0.0), data.get("context_match", ""),
+		 data.get("day_acquired", 1)]
+	)
+
+
+func get_ship_memories(save_id: int) -> Array:
+	return db.select_rows("ship_memories", "save_id = %d" % save_id, ["*"])
+
+
+func get_ship_memory_count(save_id: int) -> int:
+	var rows: Array = db.select_rows("ship_memories", "save_id = %d" % save_id, ["id"])
+	return rows.size()

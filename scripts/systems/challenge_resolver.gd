@@ -167,21 +167,33 @@ static func find_crew_for_role(roster: Array[CrewMember], role_name: String,
 		return {"crew": best, "type": "specialist", "stat_value": best_stat,
 				"display_name": "%s %s" % [role_name, best.crew_name]}
 
-	# Find best generalist
+	# Find best generalist or pinch-hitter
 	var best_gen: CrewMember = null
 	var best_gen_stat: float = -1.0
+	var best_gen_type: String = "generalist"
 	for cm: CrewMember in roster:
 		if exclude_crew != null and cm.id == exclude_crew.id:
 			continue
 		if cm.role == CrewMember.Role.GENERALIST:
-			var eff: float = cm.get_effective_stat(stat_name) * GENERALIST_MULTIPLIER
+			var mult: float = cm.get_pinch_hit_effectiveness(role_name)
+			var eff: float = cm.get_effective_stat(stat_name) * mult
 			if eff > best_gen_stat:
 				best_gen_stat = eff
 				best_gen = cm
+				best_gen_type = "generalist"
+		elif cm.role != target_role:
+			# Non-matching specialist can pinch-hit
+			var mult: float = cm.get_pinch_hit_effectiveness(role_name)
+			var eff: float = cm.get_effective_stat(stat_name) * mult
+			if eff > best_gen_stat:
+				best_gen_stat = eff
+				best_gen = cm
+				best_gen_type = "pinch_hitter"
 
 	if best_gen != null:
-		return {"crew": best_gen, "type": "generalist", "stat_value": best_gen_stat,
-				"display_name": "%s (Generalist)" % best_gen.crew_name}
+		var display: String = "%s (%s)" % [best_gen.crew_name, "Generalist" if best_gen_type == "generalist" else "Pinch-hitting"]
+		return {"crew": best_gen, "type": best_gen_type, "stat_value": best_gen_stat,
+				"display_name": display}
 
 	# Captain handles it
 	var captain_stat: float = float(GameManager._get_stat(stat_name)) * CAPTAIN_FIRST_ROLE_MULT
@@ -248,6 +260,36 @@ static func resolve_crew_challenge(roster: Array[CrewMember], primary_role: Stri
 		if primary_crew != null and primary_crew.species == CrewMember.Species.GORVIAN:
 			effective = int(float(effective) * 0.90)
 
+	# Phase 4.2: Memory context bonus
+	var primary_crew: CrewMember = primary.get("crew")
+	if primary_crew != null:
+		primary_crew.load_memories()
+		var mem_context: String = _get_encounter_context()
+		effective += int(primary_crew.get_memory_bonus(mem_context))
+
+	# Phase 4.3: Trait bonuses
+	if primary_crew != null:
+		# Reckless: +8 aggressive combat, -5 evasion (applied contextually)
+		if primary_crew.has_trait("reckless"):
+			if primary_role in ["Gunner", "Security Chief"]:
+				effective += 8
+			elif primary_role in ["Navigator"]:
+				effective -= 5
+
+		# Bonded Pair: +5 when partner is also in encounter
+		if primary_crew.has_trait("bonded_pair") and not secondary.is_empty():
+			var sec_crew: CrewMember = secondary.get("crew")
+			if sec_crew != null and sec_crew.has_trait("bonded_pair"):
+				effective += 5
+
+	# Phase 4.4: Ship memory bonuses
+	var ship_mems: Array = DatabaseManager.get_ship_memories(GameManager.save_id)
+	for smem: Dictionary in ship_mems:
+		var smem_context: String = smem.get("context_match", "")
+		var smem_type: String = smem.get("modifier_type", "")
+		if smem_type != "COHESION" and smem_context == _get_encounter_context():
+			effective += int(smem.get("modifier_value", 0.0))
+
 	var roll: int = effective + randi_range(0, maxi(effective, 1))
 
 	var tier: String
@@ -262,23 +304,33 @@ static func resolve_crew_challenge(roster: Array[CrewMember], primary_role: Stri
 	else:
 		tier = "critical_failure"
 
+	# Phase 4.1: Track pinch-hit experience
+	var pinch_hit_data: Array[Dictionary] = []
+	var prim_crew: CrewMember = primary.get("crew")
+	if prim_crew != null and primary.type in ["generalist", "pinch_hitter"]:
+		pinch_hit_data.append({"crew": prim_crew, "own_exp": 0.5, "covered_role": primary_role, "covered_exp": 0.3})
+
 	return {
 		"tier": tier,
 		"roll": roll,
 		"difficulty": difficulty,
 		"primary": primary,
 		"secondary": secondary,
+		"pinch_hit_data": pinch_hit_data,
+		"encounter_type": _get_encounter_context(),
 	}
 
 
 # === CREW CONSEQUENCES ===
 
 static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember]) -> Array[String]:
-	## Applies fatigue, morale, and injury consequences after a challenge.
+	## Applies fatigue, morale, injury consequences, memories, and experience after a challenge.
 	var events: Array[String] = []
 	var has_medic: bool = _has_medic(roster)
 	var primary: Dictionary = result.primary
 	var secondary: Dictionary = result.get("secondary", {})
+	var encounter_type: String = result.get("encounter_type", "encounter")
+	var injured_count: int = 0
 
 	match result.tier:
 		"critical_success":
@@ -286,6 +338,9 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 				_apply_purpose(primary.crew)
 				_apply_morale_delta(primary.crew, 2.0)
 				events.append("[color=#27AE60]%s handled it brilliantly.[/color]" % primary.crew.crew_name)
+				# Phase 4.2: Memory on critical success
+				CrewSimulation.create_challenge_memory(primary.crew, "critical_success",
+					primary.get("display_name", ""), encounter_type)
 			if secondary.get("crew") != null:
 				_apply_purpose(secondary.crew)
 
@@ -304,6 +359,8 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 					var inj: String = _inflict_injury(primary.crew, "minor", has_medic)
 					if inj != "":
 						events.append(inj)
+						injured_count += 1
+						CrewSimulation.create_injury_memory(primary.crew, "minor")
 
 		"failure":
 			if primary.get("crew") != null:
@@ -314,6 +371,8 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 					var inj: String = _inflict_injury(primary.crew, "minor", has_medic)
 					if inj != "":
 						events.append(inj)
+						injured_count += 1
+						CrewSimulation.create_injury_memory(primary.crew, "minor")
 			if secondary.get("crew") != null:
 				_apply_fatigue_delta(secondary.crew, 5.0)
 
@@ -321,18 +380,46 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 			if primary.get("crew") != null:
 				_apply_fatigue_delta(primary.crew, 15.0)
 				_apply_morale_delta(primary.crew, -8.0)
+				# Phase 4.2: Memory on critical failure
+				CrewSimulation.create_challenge_memory(primary.crew, "critical_failure",
+					primary.get("display_name", ""), encounter_type)
 				if randf() < 0.70:
 					var inj: String = _inflict_injury(primary.crew, "moderate", has_medic)
 					if inj != "":
 						events.append(inj)
+						injured_count += 1
+						CrewSimulation.create_injury_memory(primary.crew, "moderate")
+						# Witness memory for other crew
+						for cm: CrewMember in roster:
+							if cm.id != primary.crew.id:
+								CrewSimulation.create_witness_injury_memory(cm, primary.crew.crew_name)
 				if randf() < 0.10:
 					var inj: String = _inflict_injury(primary.crew, "severe", has_medic)
 					if inj != "":
 						events.append(inj)
+						injured_count += 1
+						CrewSimulation.create_injury_memory(primary.crew, "severe")
 			if secondary.get("crew") != null:
 				_apply_fatigue_delta(secondary.crew, 10.0)
 				_apply_morale_delta(secondary.crew, -5.0)
 				events.append("[color=#E67E22]%s took a heavy toll from the encounter.[/color]" % secondary.crew.crew_name)
+
+	# Phase 4.1: Apply pinch-hit experience
+	var pinch_data: Array = result.get("pinch_hit_data", [])
+	for phd: Dictionary in pinch_data:
+		var ph_crew: CrewMember = phd.get("crew")
+		if ph_crew != null:
+			ph_crew.add_role_experience(phd.get("own_exp", 0.5))
+			ph_crew.add_pinch_hit_experience(phd.get("covered_role", ""), phd.get("covered_exp", 0.3))
+			DatabaseManager.update_crew_member(ph_crew.id, {
+				"role_experience": ph_crew.role_experience,
+				"pinch_hit_experience": JSON.stringify(ph_crew.pinch_hit_experience),
+			})
+
+	# Phase 4.4: Check for catastrophic loss ship memory
+	if injured_count >= 2:
+		var catastrophe_events: Array[String] = CrewSimulation.check_catastrophic_loss(roster, injured_count)
+		events.append_array(catastrophe_events)
 
 	return events
 
@@ -511,3 +598,9 @@ static func _apply_fatigue_delta(cm: CrewMember, amount: float) -> void:
 static func _apply_morale_delta(cm: CrewMember, amount: float) -> void:
 	cm.morale = clampf(cm.morale + amount, 0.0, 100.0)
 	DatabaseManager.update_crew_member(cm.id, {"morale": cm.morale})
+
+
+static func _get_encounter_context() -> String:
+	## Returns a context string for the current encounter situation.
+	# This is a simple heuristic — refine as encounter types grow
+	return "combat"

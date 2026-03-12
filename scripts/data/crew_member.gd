@@ -6,6 +6,8 @@ class_name CrewMember
 
 enum Species { HUMAN, GORVIAN, VELLANI, KRELLVANI }
 enum Role { GUNNER, ENGINEER, NAVIGATOR, MEDIC, COMMS_OFFICER, SCIENCE_OFFICER, SECURITY_CHIEF, GENERALIST }
+enum EmotionalTag { HARDENED, SHAKEN, PROUD, BITTER, GRATEFUL, CAUTIOUS, RECKLESS, INSPIRED }
+enum MemoryModifierType { COMBAT_PERFORMANCE, NAVIGATION_PERFORMANCE, FACTION_REACTION, MORALE_IN_CONTEXT, SCAN_PERFORMANCE, SOCIAL_PERFORMANCE }
 
 # === PROPERTIES ===
 
@@ -30,6 +32,22 @@ var comfort_food_ticks: int = 0
 var injuries: Array = []  # [{stat_affected, reduction_amount, ticks_remaining, description}]
 var fast_learner: bool = false
 var morale_bonus: float = 0.0  # Permanent morale bonus (e.g., from bonding breakthrough)
+
+# Phase 4: Skill progression
+var role_experience: float = 0.0
+var pinch_hit_experience: Dictionary = {}  # {role_string: float}
+
+# Phase 4: Traits and tracking counters
+var traits: Array = []  # Array of trait ID strings
+var combat_encounter_count: int = 0
+var total_jumps: int = 0
+var low_food_ticks: int = 0
+var conflicts_mediated: int = 0
+var total_injuries_sustained: int = 0
+var docked_ticks: int = 0
+
+# Phase 4: In-memory cache (loaded separately)
+var memories: Array = []  # Loaded from crew_memories table when needed
 
 
 # === SPECIES / ROLE DISPLAY ===
@@ -90,6 +108,105 @@ const CULTURAL_FRICTION: Dictionary = {
 }
 
 
+# === TRAIT DEFINITIONS (Phase 4.3) ===
+
+const TRAIT_DEFINITIONS: Dictionary = {
+	"battle_tested": {
+		"name": "Battle-Tested",
+		"description": "Veteran of many fights.",
+		"positive": {"stats": {"reflexes": 5, "stamina": 5}, "context": "combat"},
+		"negative": {"stats": {"social": -3}},
+		"acquisition_text": "{name} carries themselves differently now. Ten fights and counting. They've earned something that can't be taught.",
+	},
+	"spacers_instinct": {
+		"name": "Spacer's Instinct",
+		"description": "Born to the void.",
+		"positive": {"stats": {"cognition": 5}, "context": "navigation"},
+		"negative": {"docked_restless": -2},
+		"acquisition_text": "{name} knows the feel of jump transit in their bones now. They get twitchy if the ship sits still too long.",
+	},
+	"trusted_by_faction": {
+		"name": "Trusted by Faction",
+		"description": "Known face in faction space.",
+		"positive": {"faction_bonus": 1.5},
+		"negative": {"rival_suspicion": true},
+		"acquisition_text": "{name} has become something of a known face in faction space. Doors open for them — but rival factions have noticed.",
+	},
+	"iron_stomach": {
+		"name": "Iron Stomach",
+		"description": "Can function on nothing.",
+		"positive": {"food_penalty_reduction": 0.5},
+		"negative": {"stats": {"social": -2}},
+		"acquisition_text": "{name} has learned to function on nothing. Rations don't faze them anymore.",
+	},
+	"peacemaker": {
+		"name": "Peacemaker",
+		"description": "The crew's emotional anchor.",
+		"positive": {"relationship_drift_bonus": 2},
+		"negative": {"conflict_morale_penalty": -2},
+		"acquisition_text": "{name} has become the person everyone talks to. They carry the weight of the crew's feelings — and it shows.",
+	},
+	"scarred": {
+		"name": "Scarred",
+		"description": "Marked by a serious injury.",
+		"positive": {"stats": {"cognition": 5}},
+		"negative": {"stat_penalty_key": "scarred_stat"},
+		"acquisition_text": "{name} is healed, mostly. The injury left its mark — but so did the weeks of recovery. They see things differently now.",
+	},
+	"grudge_bearer": {
+		"name": "Grudge-Bearer",
+		"description": "Carries an old hatred.",
+		"positive": {"combat_vs_grudge": 8},
+		"negative": {"social_vs_grudge": -10},
+		"acquisition_text": "{name} hasn't forgiven them. Maybe they never will. But cross them in a fight and that grudge burns like fuel.",
+	},
+	"haunted": {
+		"name": "Haunted",
+		"description": "Driven by ghosts.",
+		"positive": {"purpose_always_satisfied": true},
+		"negative": {"periodic_morale_dip": -3, "dip_interval": 15},
+		"acquisition_text": "{name} doesn't sleep well. But they're the first one at their station every morning. Whatever they're running from, it keeps them moving.",
+	},
+	"reckless": {
+		"name": "Reckless",
+		"description": "Doesn't flinch anymore.",
+		"positive": {"combat_aggressive_bonus": 8},
+		"negative": {"evasion_penalty": -5},
+		"acquisition_text": "{name} doesn't flinch anymore. That's not always a good thing — but when the guns are hot, there's nobody you'd rather have on the trigger.",
+	},
+	"bonded_pair": {
+		"name": "Bonded Pair",
+		"description": "Deep professional trust.",
+		"positive": {"paired_bonus": 5},
+		"negative": {"separation_penalty": -10, "separation_duration": 30},
+		"acquisition_text": "{a} and {b} don't need words anymore. A glance is enough. They've become something more than crewmates.",
+	},
+}
+
+# Emotional tag names for display
+const EMOTIONAL_TAG_NAMES: Dictionary = {
+	"HARDENED": "Hardened",
+	"SHAKEN": "Shaken",
+	"PROUD": "Proud",
+	"BITTER": "Bitter",
+	"GRATEFUL": "Grateful",
+	"CAUTIOUS": "Cautious",
+	"RECKLESS": "Reckless",
+	"INSPIRED": "Inspired",
+}
+
+const EMOTIONAL_TAG_COLORS: Dictionary = {
+	"HARDENED": "#E67E22",
+	"SHAKEN": "#C0392B",
+	"PROUD": "#27AE60",
+	"BITTER": "#CD4545",
+	"GRATEFUL": "#4CAF50",
+	"CAUTIOUS": "#4A90D9",
+	"RECKLESS": "#E67E22",
+	"INSPIRED": "#E6D159",
+}
+
+
 # === STAT CALCULATION ===
 
 func get_morale_modifier() -> float:
@@ -102,10 +219,21 @@ func get_fatigue_modifier() -> float:
 	return 1.0 - (fatigue / 100.0) * 0.6
 
 
+func get_experience_multiplier() -> float:
+	## Returns 0.75 (green) to 1.10 (expert) based on role experience.
+	var base_mult: float = 0.75 + 0.25 * (1.0 - exp(-role_experience / 50.0))
+	var veteran_bonus: float = 0.0
+	if role_experience > 200.0:
+		veteran_bonus = clampf((role_experience - 200.0) / 500.0, 0.0, 0.10)
+	return base_mult + veteran_bonus
+
+
 func get_effective_stat(stat_name: String) -> float:
-	## Returns base_stat * morale_modifier * fatigue_modifier - injury reductions.
+	## Full stat chain: base * experience * morale * fatigue + trait_bonuses - injuries.
 	var base: int = get_base_stat(stat_name)
-	var effective: float = float(base) * get_morale_modifier() * get_fatigue_modifier()
+	var effective: float = float(base) * get_experience_multiplier() * get_morale_modifier() * get_fatigue_modifier()
+	# Add trait bonuses
+	effective += get_trait_stat_bonus(stat_name)
 	# Subtract active injury reductions for this stat
 	for injury: Dictionary in injuries:
 		if injury.get("stat_affected", "") == stat_name:
@@ -144,6 +272,170 @@ func get_role_effectiveness() -> float:
 func get_average_stat() -> float:
 	## Returns the average of all five base stats.
 	return float(stamina + cognition + reflexes + social + resourcefulness) / 5.0
+
+
+# === SKILL PROGRESSION (Phase 4.1) ===
+
+func get_growth_label() -> String:
+	## Returns descriptive label based on experience multiplier.
+	var mult: float = get_experience_multiplier()
+	if mult >= 1.05:
+		return "Expert"
+	elif mult >= 1.0:
+		return "Veteran"
+	elif mult >= 0.95:
+		return "Skilled"
+	elif mult >= 0.85:
+		return "Capable"
+	else:
+		return "Green"
+
+
+func get_growth_color() -> String:
+	var label: String = get_growth_label()
+	match label:
+		"Expert": return "#CD4545"
+		"Veteran": return "#E6D159"
+		"Skilled": return "#27AE60"
+		"Capable": return "#4A90D9"
+		_: return "#718096"
+
+
+func add_role_experience(amount: float) -> void:
+	if fast_learner:
+		amount *= 1.25
+	role_experience += amount
+
+
+func add_pinch_hit_experience(role_name: String, amount: float) -> void:
+	var current: float = pinch_hit_experience.get(role_name, 0.0)
+	pinch_hit_experience[role_name] = current + amount
+
+
+func get_pinch_hit_effectiveness(role_name: String) -> float:
+	## Returns effectiveness multiplier for pinch-hitting a role.
+	## Generalists: base 0.65, ceiling 0.75. Others: base 0.60, ceiling 0.55 (yes, inverted — improves toward higher value).
+	var exp_val: float = pinch_hit_experience.get(role_name, 0.0)
+	if role == Role.GENERALIST:
+		# Generalists start at 0.65 and can reach 0.75
+		return 0.65 + 0.10 * (1.0 - exp(-exp_val / 30.0))
+	else:
+		# Non-generalists start at 0.60 and can reach 0.70
+		return 0.60 + 0.10 * (1.0 - exp(-exp_val / 40.0))
+
+
+# === MEMORY HELPERS (Phase 4.2) ===
+
+func load_memories() -> void:
+	## Loads memories from database into in-memory cache.
+	if id > 0:
+		memories = DatabaseManager.get_crew_memories(id)
+
+
+func get_memory_bonus(context: String) -> float:
+	## Returns sum of memory modifier values matching the given context.
+	var total: float = 0.0
+	for mem: Dictionary in memories:
+		if mem.get("context_match", "") == context:
+			if mem.get("modifier_type", "") != "MORALE_IN_CONTEXT":
+				total += mem.get("modifier_value", 0.0)
+	return total
+
+
+func get_memory_morale_modifier(context: String) -> float:
+	## Returns sum of MORALE_IN_CONTEXT modifiers matching context.
+	var total: float = 0.0
+	for mem: Dictionary in memories:
+		if mem.get("context_match", "") == context and mem.get("modifier_type", "") == "MORALE_IN_CONTEXT":
+			total += mem.get("modifier_value", 0.0)
+	return total
+
+
+func count_memories_with_tag(tag: String) -> int:
+	var count: int = 0
+	for mem: Dictionary in memories:
+		if mem.get("emotional_tag", "") == tag:
+			count += 1
+	return count
+
+
+# === TRAIT HELPERS (Phase 4.3) ===
+
+func has_trait(trait_id: String) -> bool:
+	return trait_id in traits
+
+
+func get_trait_stat_bonus(stat_name: String) -> float:
+	## Returns cumulative stat bonus from all traits for the given stat.
+	var total: float = 0.0
+	for trait_id: String in traits:
+		var tdef: Dictionary = TRAIT_DEFINITIONS.get(trait_id, {})
+		var pos: Dictionary = tdef.get("positive", {})
+		var neg: Dictionary = tdef.get("negative", {})
+		# Positive stat bonuses
+		var pos_stats: Dictionary = pos.get("stats", {})
+		if pos_stats.has(stat_name):
+			total += float(pos_stats[stat_name])
+		# Negative stat penalties
+		var neg_stats: Dictionary = neg.get("stats", {})
+		if neg_stats.has(stat_name):
+			total += float(neg_stats[stat_name])
+	return total
+
+
+func get_trait_morale_modifier() -> float:
+	## Returns morale modifier from traits that apply every tick.
+	var total: float = 0.0
+	# Haunted: periodic dip handled externally via tick counter
+	# Spacer's Instinct: docked restlessness handled externally
+	# Peacemaker: conflict morale penalty handled externally
+	return total
+
+
+func get_trait_display_info() -> Array[Dictionary]:
+	## Returns formatted trait data for UI display.
+	var info: Array[Dictionary] = []
+	for trait_id: String in traits:
+		var tdef: Dictionary = TRAIT_DEFINITIONS.get(trait_id, {})
+		if tdef.is_empty():
+			continue
+		var pos_text: String = _format_trait_effects(tdef.get("positive", {}), true)
+		var neg_text: String = _format_trait_effects(tdef.get("negative", {}), false)
+		info.append({
+			"id": trait_id,
+			"name": tdef.get("name", trait_id),
+			"description": tdef.get("description", ""),
+			"positive_text": pos_text,
+			"negative_text": neg_text,
+		})
+	return info
+
+
+func _format_trait_effects(effects: Dictionary, is_positive: bool) -> String:
+	var parts: Array[String] = []
+	if effects.has("stats"):
+		for stat_name: String in effects.stats:
+			var val: int = effects.stats[stat_name]
+			parts.append("%+d %s" % [val, stat_name.capitalize()])
+	if effects.has("food_penalty_reduction"):
+		parts.append("50%% less food morale penalty")
+	if effects.has("relationship_drift_bonus"):
+		parts.append("+%d relationship drift" % effects.relationship_drift_bonus)
+	if effects.has("purpose_always_satisfied"):
+		parts.append("+5 purpose")
+	if effects.has("combat_aggressive_bonus"):
+		parts.append("+%d aggressive combat" % effects.combat_aggressive_bonus)
+	if effects.has("paired_bonus"):
+		parts.append("+%d when paired" % effects.paired_bonus)
+	if effects.has("docked_restless"):
+		parts.append("%d morale when docked" % effects.docked_restless)
+	if effects.has("evasion_penalty"):
+		parts.append("%d evasion" % effects.evasion_penalty)
+	if effects.has("periodic_morale_dip"):
+		parts.append("%d morale every %d days" % [effects.periodic_morale_dip, effects.get("dip_interval", 15)])
+	if effects.has("conflict_morale_penalty"):
+		parts.append("%d morale on conflict" % effects.conflict_morale_penalty)
+	return ", ".join(parts)
 
 
 # === DISPLAY HELPERS ===
@@ -256,12 +548,30 @@ static func from_dict(data: Dictionary) -> CrewMember:
 	cm.comfort_food_ticks = data.get("comfort_food_ticks", 0)
 	cm.fast_learner = bool(data.get("fast_learner", 0))
 	cm.morale_bonus = data.get("morale_bonus", 0.0)
-	# Parse injuries from JSON string
+	# Phase 4 fields
+	cm.role_experience = data.get("role_experience", 0.0)
+	cm.combat_encounter_count = data.get("combat_encounter_count", 0)
+	cm.total_jumps = data.get("total_jumps", 0)
+	cm.low_food_ticks = data.get("low_food_ticks", 0)
+	cm.conflicts_mediated = data.get("conflicts_mediated", 0)
+	cm.total_injuries_sustained = data.get("total_injuries_sustained", 0)
+	cm.docked_ticks = data.get("docked_ticks", 0)
+	# Parse JSON fields
 	var injuries_str: String = data.get("injuries", "[]")
 	if injuries_str != "" and injuries_str != "[]":
 		var parsed: Variant = JSON.parse_string(injuries_str)
 		if parsed is Array:
 			cm.injuries = parsed
+	var phe_str: String = data.get("pinch_hit_experience", "{}")
+	if phe_str != "" and phe_str != "{}":
+		var parsed: Variant = JSON.parse_string(phe_str)
+		if parsed is Dictionary:
+			cm.pinch_hit_experience = parsed
+	var traits_str: String = data.get("traits", "[]")
+	if traits_str != "" and traits_str != "[]":
+		var parsed: Variant = JSON.parse_string(traits_str)
+		if parsed is Array:
+			cm.traits = parsed
 	return cm
 
 
@@ -286,6 +596,15 @@ func to_dict() -> Dictionary:
 		"injuries": JSON.stringify(injuries),
 		"fast_learner": 1 if fast_learner else 0,
 		"morale_bonus": morale_bonus,
+		"role_experience": role_experience,
+		"pinch_hit_experience": JSON.stringify(pinch_hit_experience),
+		"traits": JSON.stringify(traits),
+		"combat_encounter_count": combat_encounter_count,
+		"total_jumps": total_jumps,
+		"low_food_ticks": low_food_ticks,
+		"conflicts_mediated": conflicts_mediated,
+		"total_injuries_sustained": total_injuries_sustained,
+		"docked_ticks": docked_ticks,
 	}
 
 

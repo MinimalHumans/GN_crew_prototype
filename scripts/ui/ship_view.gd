@@ -107,6 +107,9 @@ func _build_ui() -> void:
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.add_theme_constant_override("separation", 8)
 
+	# Ship History section (above crew grid)
+	_add_ship_history_section(content)
+
 	# Section label
 	var grid_label: Label = Label.new()
 	grid_label.text = "CREW ROSTER"
@@ -305,24 +308,32 @@ func _show_crew_profile(cm: CrewMember) -> void:
 	trait_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail_panel.add_child(trait_lbl)
 
+	# Growth label
+	var growth_row: HBoxContainer = HBoxContainer.new()
+	growth_row.add_theme_constant_override("separation", 4)
+	var growth_prefix: Label = Label.new()
+	growth_prefix.text = "Experience:"
+	growth_prefix.add_theme_font_size_override("font_size", 11)
+	growth_prefix.add_theme_color_override("font_color", Color(COLOR_MUTED))
+	growth_row.add_child(growth_prefix)
+	var growth_val: Label = Label.new()
+	growth_val.text = "%s (×%.2f)" % [cm.get_growth_label(), cm.get_experience_multiplier()]
+	growth_val.add_theme_font_size_override("font_size", 11)
+	growth_val.add_theme_color_override("font_color", Color(cm.get_growth_color()))
+	growth_row.add_child(growth_val)
+	detail_panel.add_child(growth_row)
+
 	# Active injuries
 	_add_injury_summary(cm)
 
 	# Relationships
 	_add_relationship_summary(cm)
 
-	# Placeholders for future tiers
-	var memory_lbl: Label = Label.new()
-	memory_lbl.text = "Formative memories: None yet. (Phase 4)"
-	memory_lbl.add_theme_font_size_override("font_size", 10)
-	memory_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
-	detail_panel.add_child(memory_lbl)
+	# Formative memories section
+	_add_memory_section(cm)
 
-	var traits_lbl: Label = Label.new()
-	traits_lbl.text = "Acquired traits: None yet. (Phase 4)"
-	traits_lbl.add_theme_font_size_override("font_size", 10)
-	traits_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
-	detail_panel.add_child(traits_lbl)
+	# Acquired traits section
+	_add_traits_section(cm)
 
 	# Dismiss button
 	detail_panel.add_child(HSeparator.new())
@@ -544,6 +555,131 @@ func _add_relationship_summary(cm: CrewMember) -> void:
 		rel_lbl.add_theme_font_size_override("font_size", 10)
 		rel_lbl.add_theme_color_override("font_color", Color(color))
 		detail_panel.add_child(rel_lbl)
+
+
+func _add_memory_section(cm: CrewMember) -> void:
+	## Displays formative memories for a crew member.
+	var mem_header: Label = Label.new()
+	mem_header.text = "Formative Memories:"
+	mem_header.add_theme_font_size_override("font_size", 11)
+	mem_header.add_theme_color_override("font_color", Color(COLOR_ACCENT))
+	detail_panel.add_child(mem_header)
+
+	# Load memories from DB if not already loaded
+	if cm.memories.is_empty():
+		cm.load_memories()
+
+	if cm.memories.is_empty():
+		var none_lbl: Label = Label.new()
+		none_lbl.text = "  No formative memories yet."
+		none_lbl.add_theme_font_size_override("font_size", 10)
+		none_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
+		detail_panel.add_child(none_lbl)
+		return
+
+	for mem: Dictionary in cm.memories:
+		var mem_row: HBoxContainer = HBoxContainer.new()
+		mem_row.add_theme_constant_override("separation", 6)
+
+		# Emotional tag badge
+		var tag: String = mem.get("emotional_tag", "")
+		var tag_name: String = CrewMember.EMOTIONAL_TAG_NAMES.get(tag, tag)
+		var tag_color: String = CrewMember.EMOTIONAL_TAG_COLORS.get(tag, COLOR_MUTED)
+		var tag_lbl: Label = Label.new()
+		tag_lbl.text = "[%s]" % tag_name
+		tag_lbl.add_theme_font_size_override("font_size", 10)
+		tag_lbl.add_theme_color_override("font_color", Color(tag_color))
+		tag_lbl.custom_minimum_size = Vector2(75, 0)
+		mem_row.add_child(tag_lbl)
+
+		# Trigger text (muted)
+		var trigger_lbl: Label = Label.new()
+		trigger_lbl.text = mem.get("trigger_text", "")
+		trigger_lbl.add_theme_font_size_override("font_size", 10)
+		trigger_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
+		trigger_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		trigger_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		mem_row.add_child(trigger_lbl)
+
+		# Modifier summary
+		var mod_val: float = mem.get("modifier_value", 0.0)
+		var mod_lbl: Label = Label.new()
+		mod_lbl.text = "%+.0f" % mod_val
+		mod_lbl.add_theme_font_size_override("font_size", 10)
+		var mod_color: String = COLOR_GOOD if mod_val > 0 else (COLOR_BAD if mod_val < 0 else COLOR_MUTED)
+		mod_lbl.add_theme_color_override("font_color", Color(mod_color))
+		mem_row.add_child(mod_lbl)
+
+		detail_panel.add_child(mem_row)
+
+
+func _add_traits_section(cm: CrewMember) -> void:
+	## Displays acquired traits for a crew member.
+	var traits_header: Label = Label.new()
+	traits_header.text = "Acquired Traits:"
+	traits_header.add_theme_font_size_override("font_size", 11)
+	traits_header.add_theme_color_override("font_color", Color(COLOR_ACCENT))
+	detail_panel.add_child(traits_header)
+
+	var trait_info: Array[Dictionary] = cm.get_trait_display_info()
+	if trait_info.is_empty():
+		var none_lbl: Label = Label.new()
+		none_lbl.text = "  No acquired traits yet."
+		none_lbl.add_theme_font_size_override("font_size", 10)
+		none_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
+		detail_panel.add_child(none_lbl)
+		return
+
+	for tinfo: Dictionary in trait_info:
+		var trait_row: VBoxContainer = VBoxContainer.new()
+		trait_row.add_theme_constant_override("separation", 1)
+
+		var name_lbl: Label = Label.new()
+		name_lbl.text = "  %s" % tinfo.name
+		name_lbl.add_theme_font_size_override("font_size", 11)
+		name_lbl.add_theme_color_override("font_color", Color(COLOR_ACCENT))
+		trait_row.add_child(name_lbl)
+
+		if not tinfo.positive_text.is_empty():
+			var pos_lbl: Label = Label.new()
+			pos_lbl.text = "    + %s" % tinfo.positive_text
+			pos_lbl.add_theme_font_size_override("font_size", 10)
+			pos_lbl.add_theme_color_override("font_color", Color(COLOR_GOOD))
+			trait_row.add_child(pos_lbl)
+
+		if not tinfo.negative_text.is_empty():
+			var neg_lbl: Label = Label.new()
+			neg_lbl.text = "    - %s" % tinfo.negative_text
+			neg_lbl.add_theme_font_size_override("font_size", 10)
+			neg_lbl.add_theme_color_override("font_color", Color(COLOR_BAD))
+			trait_row.add_child(neg_lbl)
+
+		detail_panel.add_child(trait_row)
+
+
+func _add_ship_history_section(content: VBoxContainer) -> void:
+	## Adds the Ship History section showing ship memories.
+	var ship_memories: Array = DatabaseManager.get_ship_memories(GameManager.save_id)
+	if ship_memories.is_empty():
+		return
+
+	var history_label: Label = Label.new()
+	history_label.text = "SHIP HISTORY"
+	history_label.add_theme_font_size_override("font_size", 12)
+	history_label.add_theme_color_override("font_color", Color(COLOR_ACCENT))
+	content.add_child(history_label)
+
+	for mem: Dictionary in ship_memories:
+		var mem_lbl: Label = Label.new()
+		var day: int = mem.get("day_acquired", 0)
+		var desc: String = mem.get("event_description", "")
+		mem_lbl.text = "  Day %d — \"%s\"" % [day, desc]
+		mem_lbl.add_theme_font_size_override("font_size", 10)
+		mem_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
+		mem_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		content.add_child(mem_lbl)
+
+	content.add_child(HSeparator.new())
 
 
 func _clear_detail_panel() -> void:

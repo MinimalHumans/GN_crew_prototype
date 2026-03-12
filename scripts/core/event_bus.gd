@@ -56,6 +56,12 @@ signal encounter_resolved(outcome: String)
 signal challenge_presented(options: Array)
 signal challenge_choice_made(choice_index: int)
 
+# === CREW GROWTH (Phase 4) ===
+signal crew_skill_gained(crew_id: int, crew_name: String, new_label: String)
+signal crew_memory_formed(crew_id: int, crew_name: String, trigger_text: String)
+signal crew_trait_acquired(crew_id: int, crew_name: String, trait_id: String, trait_name: String)
+signal ship_memory_formed(event_description: String)
+
 # === UI ===
 signal message_logged(text: String, color: Color)
 signal scene_change_requested(scene_path: String)

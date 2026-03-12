@@ -318,3 +318,50 @@ static func get_comfort_food_text(crew_name: String, species_name: String) -> St
 	if COMFORT_FOOD_TEXT.has(species_name):
 		return _pick(COMFORT_FOOD_TEXT[species_name]).replace("{name}", crew_name)
 	return "%s enjoys the familiar food." % crew_name
+
+
+# === MEMORY-REFERENCED DIALOGUE (Phase 4.2) ===
+
+const MEMORY_DIALOGUE: Dictionary = {
+	"HARDENED": [
+		"{name} glances at the old scar. Their jaw tightens, but their hands are steady.",
+		"{name}'s eyes go distant for a moment. They've been here before. They know the cost.",
+		"{name} doesn't flinch. Not anymore. The memory has become armor.",
+	],
+	"SHAKEN": [
+		"{name} freezes for a heartbeat. The memory surfaces uninvited. They push through.",
+		"{name}'s hands tremble slightly. The last time something like this happened...",
+		"{name} takes a sharp breath. Old fears don't die — they just learn to be quiet.",
+	],
+	"PROUD": [
+		"{name} stands a little taller. They've proven themselves before, and they'll do it again.",
+		"A flicker of confidence crosses {name}'s face. They remember what they're capable of.",
+	],
+	"BITTER": [
+		"{name}'s expression hardens. Some wounds don't heal with time.",
+		"{name} mutters something under their breath. The resentment runs deep.",
+	],
+	"GRATEFUL": [
+		"{name} looks around with quiet appreciation. They remember what it means to belong.",
+		"Something softens in {name}'s expression. They haven't forgotten the kindness.",
+	],
+	"CAUTIOUS": [
+		"{name} checks the instruments twice. After what happened, they take nothing for granted.",
+		"{name} scans the horizon carefully. Caution born from experience.",
+	],
+	"RECKLESS": [
+		"{name} grins at the danger. After everything, fear feels like a suggestion.",
+		"{name} pushes forward without hesitation. Caution was never their strong suit.",
+	],
+	"INSPIRED": [
+		"{name}'s eyes light up. They've seen what's possible, and it drives them forward.",
+		"There's a spark in {name}. The memory of triumph is fuel for the next challenge.",
+	],
+}
+
+
+static func get_memory_dialogue(crew_name: String, emotional_tag: String) -> String:
+	## Returns a memory-referenced dialogue line.
+	if MEMORY_DIALOGUE.has(emotional_tag):
+		return _pick(MEMORY_DIALOGUE[emotional_tag]).replace("{name}", crew_name)
+	return "%s is lost in thought for a moment." % crew_name

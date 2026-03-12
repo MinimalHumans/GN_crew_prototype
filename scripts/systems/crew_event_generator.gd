@@ -77,6 +77,18 @@ static func _generate_background_events(roster: Array[CrewMember]) -> Array[Stri
 			roster[idx_a].crew_name, roster[idx_b].crew_name)
 		events.append("[color=#718096]%s[/color]" % text)
 
+	# Phase 4.2: Memory-referenced dialogue (30% chance per crew member with memories)
+	for cm: CrewMember in roster:
+		if cm.memories.is_empty():
+			cm.load_memories()
+		if not cm.memories.is_empty() and randf() < 0.30:
+			# Pick a random memory and generate dialogue
+			var mem: Dictionary = cm.memories[randi() % cm.memories.size()]
+			var tag: String = mem.get("emotional_tag", "")
+			if tag != "":
+				var dialogue: String = CrewEventTemplates.get_memory_dialogue(cm.crew_name, tag)
+				events.append("[color=#718096]%s[/color]" % dialogue)
+
 	return events
 
 
@@ -377,6 +389,12 @@ static func resolve_decision(event_id: String, choice: int, event_data: Dictiona
 			_adjust_morale(effects.crew_a, -5.0)
 			_adjust_morale(effects.crew_b, -5.0)
 			_adjust_relationship(effects.crew_a, effects.crew_b, 10.0)
+			# Increment conflicts_mediated on all high-Social crew
+			var roster: Array[CrewMember] = GameManager.get_crew_roster()
+			for cm: CrewMember in roster:
+				if cm.social > 60:
+					cm.conflicts_mediated += 1
+					DatabaseManager.update_crew_member(cm.id, {"conflicts_mediated": cm.conflicts_mediated})
 			return "Neither is happy, but they agree to try. Your authority held."
 		"crew_conflict_ignore":
 			_adjust_morale(effects.crew_a, -8.0)

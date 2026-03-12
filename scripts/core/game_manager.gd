@@ -708,6 +708,11 @@ func _resolve_mission(mission: Dictionary) -> Dictionary:
 
 	EventBus.mission_completed.emit(mission.id, outcome.tier != "critical_failure")
 
+	# Check for ship memory triggers from mission outcome
+	if roster.size() > 0:
+		var ship_mem_events: Array[String] = CrewSimulation.check_mission_ship_memory(outcome.tier, mission)
+		crew_events.append_array(ship_mem_events)
+
 	return {
 		"mission": mission,
 		"outcome_tier": outcome.tier,
@@ -847,6 +852,22 @@ func _finalize_recruitment(candidate: CrewMember, starting_morale: float, result
 		var friction: int = CrewMember.get_friction_between(candidate.species, existing_species)
 		DatabaseManager.insert_crew_relationship(crew_id, row.id, float(friction))
 
+	# Ship culture propagation: copy ship memories as crew memories at 30% modifier
+	var ship_memories: Array = DatabaseManager.get_ship_memories(save_id)
+	for sm: Dictionary in ship_memories:
+		var scaled_value: float = sm.get("modifier_value", 0.0) * 0.30
+		DatabaseManager.insert_crew_memory(crew_id, {
+			"trigger_text": sm.get("event_description", ""),
+			"emotional_tag": "HARDENED",
+			"modifier_type": sm.get("modifier_type", "COMBAT_PERFORMANCE"),
+			"modifier_value": scaled_value,
+			"context_match": sm.get("context_match", ""),
+			"day_acquired": day_count,
+			"significance": 3,
+			"is_ship_culture": 1,
+			"culture_scaled": 0,
+		})
+
 	EventBus.crew_recruited.emit(crew_id, candidate.crew_name)
 	EventBus.crew_changed.emit()
 	save_game()
@@ -855,12 +876,13 @@ func _finalize_recruitment(candidate: CrewMember, starting_morale: float, result
 
 
 func dismiss_crew(crew_id: int) -> void:
-	## Dismisses a crew member (sets inactive, removes relationships).
+	## Dismisses a crew member (sets inactive, removes relationships and memories).
 	var crew_data: Dictionary = DatabaseManager.get_crew_member(crew_id)
 	var crew_name: String = crew_data.get("name", "Unknown")
 
 	DatabaseManager.deactivate_crew_member(crew_id)
 	DatabaseManager.delete_crew_relationships(crew_id)
+	DatabaseManager.delete_all_crew_memories(crew_id)
 
 	EventBus.crew_dismissed.emit(crew_id, crew_name)
 	EventBus.crew_changed.emit()
