@@ -18,5 +18,4 @@ mono_crash.*.json
 # Runtime database (generated per save)
 database/*.db
 
-# SQLite plugin binary (download separately)
-addons/godot-sqlite/bin/
+
