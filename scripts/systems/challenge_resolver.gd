@@ -461,6 +461,14 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 				"pinch_hit_experience": JSON.stringify(ph_crew.pinch_hit_experience),
 			})
 
+	# Phase 5.5: Combat death check on critical failure (difficulty 4-5)
+	if result.tier == "critical_failure":
+		var difficulty: int = result.get("difficulty", 0)
+		if primary.get("crew") != null:
+			var death_events: Array[String] = CrewSimulation.check_combat_death(
+				primary.crew, difficulty, roster)
+			events.append_array(death_events)
+
 	# Phase 4.4: Check for catastrophic loss ship memory
 	if injured_count >= 2:
 		var catastrophe_events: Array[String] = CrewSimulation.check_catastrophic_loss(roster, injured_count)

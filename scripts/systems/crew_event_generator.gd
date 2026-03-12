@@ -448,8 +448,32 @@ static func _build_quarantine_decision(roster: Array[CrewMember], species_key: S
 
 static func resolve_decision(event_id: String, choice: int, event_data: Dictionary) -> String:
 	## Applies mechanical consequences of a decision choice. Returns result text.
-	var effects: Dictionary = event_data.options[choice].effects
 	GameManager.ticks_since_last_decision = 0
+
+	# Phase 5.4: Crew-generated mission decisions
+	if event_data.get("type", "") == "crew_generated_mission":
+		var action: String = event_data.options[choice].get("action", "")
+		var cgm_events: Array[String] = CrewSimulation.resolve_crew_gen_mission_decision(
+			event_id, choice, event_data)
+		for ev: String in cgm_events:
+			EventBus.message_logged.emit(ev, Color.WHITE)
+		if action == "accept":
+			return "You set course for their personal mission."
+		return "You decline. There are more pressing matters."
+
+	# Phase 5.5: Retirement decisions
+	if event_data.get("type", "") == "retirement":
+		var ret_events: Array[String] = CrewSimulation.resolve_retirement_decision(
+			event_data, choice)
+		for ev: String in ret_events:
+			EventBus.message_logged.emit(ev, Color.WHITE)
+		return "The crew processes the news."
+
+	# Phase 5.5: Death acknowledgement (single-option modal)
+	if event_data.get("type", "") == "crew_death":
+		return "The crew falls silent."
+
+	var effects: Dictionary = event_data.options[choice].effects
 
 	var result_text: String = _resolve_decision_effects(effects)
 

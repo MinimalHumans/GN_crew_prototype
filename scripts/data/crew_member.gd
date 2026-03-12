@@ -63,6 +63,15 @@ var permanent_impairments: Array = []  # [{stat, amount, source}]
 var is_quarantined: bool = false
 var quarantine_ticks: int = 0
 
+# Phase 5.4: Origin tracking
+var origin: String = "recruited"  # recruited, rescue, stowaway
+
+# Phase 5.5: Death, grief, legacy
+var death_day: int = 0
+var grief_state: String = ""  # "", GRIEVING, RESOLVED, BROKEN
+var grief_ticks_remaining: int = 0
+var stat_bonus_all: int = 0  # Permanent all-stat modifier (positive or negative)
+
 
 # === SPECIES / ROLE DISPLAY ===
 
@@ -195,6 +204,43 @@ const TRAIT_DEFINITIONS: Dictionary = {
 		"negative": {"separation_penalty": -10, "separation_duration": 30},
 		"acquisition_text": "{a} and {b} don't need words anymore. A glance is enough. They've become something more than crewmates.",
 	},
+	# Phase 5.4: Crew-generated mission replacement traits
+	"settled": {
+		"name": "Settled",
+		"description": "Found peace with old grudges.",
+		"positive": {"stats": {"social": 3}},
+		"negative": {},
+		"acquisition_text": "{name} came back from the meeting different. Quieter. The anger is still there, but it's not running the show anymore.",
+	},
+	"at_peace": {
+		"name": "At Peace",
+		"description": "Processed old trauma.",
+		"positive": {"stats": {"cognition": 3}, "purpose_always_satisfied": true},
+		"negative": {},
+		"acquisition_text": "{name} stood at the viewport and exhaled — a breath they'd been holding for weeks. 'Okay,' they said. 'Okay.'",
+	},
+	"proven": {
+		"name": "Proven",
+		"description": "Earned their place on the crew.",
+		"positive": {"stats": {"stamina": 3, "cognition": 3, "reflexes": 3, "social": 3, "resourcefulness": 3}},
+		"negative": {},
+		"acquisition_text": "{name} walks off the bridge and the crew parts for them — not in fear, but respect. The desperate stowaway is gone.",
+	},
+	# Phase 5.5: Grief resolution traits
+	"resolved": {
+		"name": "Resolved",
+		"description": "Emerged stronger through grief.",
+		"positive": {"stats": {"stamina": 5, "cognition": 5, "reflexes": 5, "social": 5, "resourcefulness": 5}},
+		"negative": {},
+		"acquisition_text": "{name} is different now. The grief isn't gone — it never will be. But there's steel underneath it.",
+	},
+	"broken_spirit": {
+		"name": "Broken",
+		"description": "Shattered by loss.",
+		"positive": {},
+		"negative": {"stats": {"stamina": -5, "cognition": -5, "reflexes": -5, "social": -5, "resourcefulness": -5}},
+		"acquisition_text": "{name} packs their bag slowly. They don't say goodbye to anyone.",
+	},
 }
 
 # Phase 5.2: Value preference display
@@ -290,8 +336,13 @@ func get_effective_stat(stat_name: String) -> float:
 	## Full stat chain: base * experience * morale * fatigue + trait_bonuses - injuries - impairments - diseases.
 	var base: int = get_base_stat(stat_name)
 	var effective: float = float(base) * get_experience_multiplier() * get_morale_modifier() * get_fatigue_modifier()
+	# Phase 5.5: Grief performance penalty (-30% all stats while grieving)
+	if grief_state == "GRIEVING":
+		effective *= 0.70
 	# Add trait bonuses
 	effective += get_trait_stat_bonus(stat_name)
+	# Phase 5.5: Apply permanent all-stat bonus/penalty
+	effective += float(stat_bonus_all)
 	# Subtract active injury reductions for this stat
 	for injury: Dictionary in injuries:
 		if injury.get("stat_affected", "") == stat_name:
@@ -764,6 +815,12 @@ static func from_dict(data: Dictionary) -> CrewMember:
 	# Phase 5.3 fields
 	cm.is_quarantined = bool(data.get("is_quarantined", 0))
 	cm.quarantine_ticks = data.get("quarantine_ticks", 0)
+	# Phase 5.4/5.5 fields
+	cm.origin = data.get("origin", "recruited")
+	cm.death_day = data.get("death_day", 0)
+	cm.grief_state = data.get("grief_state", "")
+	cm.grief_ticks_remaining = data.get("grief_ticks_remaining", 0)
+	cm.stat_bonus_all = data.get("stat_bonus_all", 0)
 	# Parse JSON fields
 	var injuries_str: String = data.get("injuries", "[]")
 	if injuries_str != "" and injuries_str != "[]":
@@ -833,6 +890,11 @@ func to_dict() -> Dictionary:
 		"permanent_impairments": JSON.stringify(permanent_impairments),
 		"is_quarantined": 1 if is_quarantined else 0,
 		"quarantine_ticks": quarantine_ticks,
+		"origin": origin,
+		"death_day": death_day,
+		"grief_state": grief_state,
+		"grief_ticks_remaining": grief_ticks_remaining,
+		"stat_bonus_all": stat_bonus_all,
 	}
 
 

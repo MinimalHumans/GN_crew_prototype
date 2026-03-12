@@ -269,6 +269,46 @@ func _create_tables() -> void:
 		)
 	""")
 
+	# Phase 5.4: Crew-generated missions table
+	db.query("""
+		CREATE TABLE IF NOT EXISTS crew_generated_missions (
+			id INTEGER PRIMARY KEY,
+			save_id INTEGER NOT NULL,
+			crew_id INTEGER NOT NULL,
+			template_type TEXT NOT NULL,
+			destination_id INTEGER NOT NULL,
+			setup_text TEXT DEFAULT '',
+			objective_text TEXT DEFAULT '',
+			time_limit INTEGER DEFAULT 15,
+			ticks_remaining INTEGER DEFAULT 15,
+			status TEXT DEFAULT 'ACTIVE',
+			extra_data TEXT DEFAULT '{}',
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (save_id) REFERENCES save_state(id),
+			FOREIGN KEY (crew_id) REFERENCES crew_members(id),
+			FOREIGN KEY (destination_id) REFERENCES planets(id)
+		)
+	""")
+
+	# Phase 5.5: Crew legacy table
+	db.query("""
+		CREATE TABLE IF NOT EXISTS crew_legacy (
+			id INTEGER PRIMARY KEY,
+			save_id INTEGER NOT NULL,
+			crew_name TEXT NOT NULL,
+			crew_role TEXT NOT NULL,
+			departure_type TEXT NOT NULL,
+			legacy_text TEXT DEFAULT '',
+			effect_type TEXT DEFAULT '',
+			effect_value REAL DEFAULT 0.0,
+			effect_context TEXT DEFAULT '',
+			effect_ticks_remaining INTEGER DEFAULT -1,
+			day_departed INTEGER DEFAULT 0,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (save_id) REFERENCES save_state(id)
+		)
+	""")
+
 	# Phase 5.1: Romance table
 	db.query("""
 		CREATE TABLE IF NOT EXISTS crew_romances (
@@ -666,9 +706,11 @@ func delete_save(save_id: int) -> void:
 	for crew: Dictionary in crew_ids:
 		db.query_with_bindings("DELETE FROM crew_relationships WHERE crew_a_id = ? OR crew_b_id = ?", [crew.id, crew.id])
 		db.query_with_bindings("DELETE FROM crew_memories WHERE crew_id = ?", [crew.id])
-	# Delete ship memories and romances
+	# Delete ship memories, romances, crew-gen missions, and legacies
 	db.query_with_bindings("DELETE FROM ship_memories WHERE save_id = ?", [save_id])
 	db.query_with_bindings("DELETE FROM crew_romances WHERE save_id = ?", [save_id])
+	db.query_with_bindings("DELETE FROM crew_generated_missions WHERE save_id = ?", [save_id])
+	db.query_with_bindings("DELETE FROM crew_legacy WHERE save_id = ?", [save_id])
 	for table: String in ["crew_members", "cargo", "missions_active", "visited_planets", "ships", "captain_stats"]:
 		db.query_with_bindings("DELETE FROM %s WHERE save_id = ?" % table, [save_id])
 	db.query_with_bindings("DELETE FROM save_state WHERE id = ?", [save_id])
@@ -757,6 +799,16 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("crew_members", "quarantine_ticks", "INTEGER DEFAULT 0")
 	# Phase 5.3: Hospital service flag
 	_add_column_if_missing("planets", "has_hospital", "INTEGER DEFAULT 0")
+	# Phase 5.4: Crew-generated mission tracking
+	_add_column_if_missing("crew_members", "origin", "TEXT DEFAULT 'recruited'")
+	_add_column_if_missing("save_state", "last_crew_gen_mission_tick", "INTEGER DEFAULT 0")
+	# Phase 5.5: Death, grief, legacy
+	_add_column_if_missing("crew_members", "death_day", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "grief_state", "TEXT DEFAULT ''")
+	_add_column_if_missing("crew_members", "grief_ticks_remaining", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "stat_bonus_all", "INTEGER DEFAULT 0")
+	_add_column_if_missing("save_state", "morale_floor", "REAL DEFAULT 0.0")
+	_add_column_if_missing("save_state", "combat_morale_resistance", "REAL DEFAULT 0.0")
 	# Seed Phase 3 planet flags
 	_seed_phase3_planet_flags()
 	# Seed Phase 5.3 hospital flags
@@ -1105,3 +1157,93 @@ func get_partner_id(crew_id: int) -> int:
 	if rom.crew_a_id == crew_id:
 		return rom.crew_b_id
 	return rom.crew_a_id
+
+
+# === CREW-GENERATED MISSIONS (Phase 5.4) ===
+
+func insert_crew_generated_mission(save_id: int, data: Dictionary) -> int:
+	## Inserts a crew-generated mission. Returns the new id.
+	db.query_with_bindings(
+		"INSERT INTO crew_generated_missions (save_id, crew_id, template_type, destination_id, setup_text, objective_text, time_limit, ticks_remaining, status, extra_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[save_id, data.get("crew_id", -1), data.get("template_type", ""),
+		 data.get("destination_id", -1), data.get("setup_text", ""),
+		 data.get("objective_text", ""), data.get("time_limit", 15),
+		 data.get("ticks_remaining", 15), data.get("status", "ACTIVE"),
+		 data.get("extra_data", "{}")]
+	)
+	var result: Array = db.select_rows("crew_generated_missions", "save_id = %d" % save_id, ["id"])
+	if result.is_empty():
+		return -1
+	return result.back().id
+
+
+func get_active_crew_generated_mission(save_id: int) -> Dictionary:
+	## Returns the currently active crew-generated mission, or empty dict.
+	var result: Array = db.select_rows(
+		"crew_generated_missions",
+		"save_id = %d AND status = 'ACTIVE'" % save_id,
+		["*"]
+	)
+	if result.is_empty():
+		return {}
+	return result[0]
+
+
+func get_crew_generated_mission_count(save_id: int) -> int:
+	var rows: Array = db.select_rows("crew_generated_missions", "save_id = %d AND status = 'ACTIVE'" % save_id, ["id"])
+	return rows.size()
+
+
+func update_crew_generated_mission(mission_id: int, data: Dictionary) -> void:
+	var sets: PackedStringArray = []
+	var values: Array = []
+	for key: String in data:
+		sets.append("%s = ?" % key)
+		values.append(data[key])
+	values.append(mission_id)
+	db.query_with_bindings(
+		"UPDATE crew_generated_missions SET %s WHERE id = ?" % ", ".join(sets),
+		values
+	)
+
+
+# === CREW LEGACY (Phase 5.5) ===
+
+func insert_crew_legacy(save_id: int, data: Dictionary) -> void:
+	db.query_with_bindings(
+		"INSERT INTO crew_legacy (save_id, crew_name, crew_role, departure_type, legacy_text, effect_type, effect_value, effect_context, effect_ticks_remaining, day_departed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[save_id, data.get("crew_name", ""), data.get("crew_role", ""),
+		 data.get("departure_type", ""), data.get("legacy_text", ""),
+		 data.get("effect_type", ""), data.get("effect_value", 0.0),
+		 data.get("effect_context", ""), data.get("effect_ticks_remaining", -1),
+		 data.get("day_departed", 0)]
+	)
+
+
+func get_crew_legacies(save_id: int) -> Array:
+	return db.select_rows("crew_legacy", "save_id = %d" % save_id, ["*"])
+
+
+func get_active_legacy_effects(save_id: int) -> Array:
+	## Returns all legacies with active effects (permanent or ticks remaining > 0).
+	return db.select_rows(
+		"crew_legacy",
+		"save_id = %d AND (effect_ticks_remaining = -1 OR effect_ticks_remaining > 0)" % save_id,
+		["*"]
+	)
+
+
+func tick_legacy_effects(save_id: int) -> void:
+	## Decrements ticks_remaining on temporary legacy effects.
+	db.query_with_bindings(
+		"UPDATE crew_legacy SET effect_ticks_remaining = effect_ticks_remaining - 1 WHERE save_id = ? AND effect_ticks_remaining > 0",
+		[save_id]
+	)
+
+
+func delete_crew_legacies(save_id: int) -> void:
+	db.query_with_bindings("DELETE FROM crew_legacy WHERE save_id = ?", [save_id])
+
+
+func delete_crew_generated_missions(save_id: int) -> void:
+	db.query_with_bindings("DELETE FROM crew_generated_missions WHERE save_id = ?", [save_id])

@@ -5,6 +5,8 @@ extends Control
 
 enum PanelMode { SERVICES, SHOP, MISSION_BOARD, SHIPYARD, RECRUITMENT, SHIP_VIEW }
 var current_panel: PanelMode = PanelMode.SERVICES
+var _pending_decision: Dictionary = {}
+var _decision_container: VBoxContainer = null
 
 # === NODE REFERENCES — LEFT PANEL ===
 @onready var planet_rect: ColorRect = $HSplit/LeftPanel/Margin/LeftVBox/PlanetSection/PlanetRect
@@ -59,6 +61,7 @@ func _ready() -> void:
 	EventBus.level_up.connect(_on_level_up)
 	EventBus.xp_gained.connect(func(_a: int, _t: int) -> void: _update_player_info())
 	EventBus.crew_changed.connect(func() -> void: _update_ship_info())
+	EventBus.decision_event_fired.connect(_on_decision_event)
 
 	_update_planet_display()
 	_update_player_info()
@@ -414,3 +417,60 @@ func _on_menu_pressed() -> void:
 	GameManager.save_game()
 	GameManager.is_game_active = false
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
+
+
+# === DECISION EVENTS (Phase 5.4/5.5) ===
+
+func _on_decision_event(event_data: Dictionary) -> void:
+	## Handles decision events that fire during planet arrival (retirement, death, etc.).
+	_pending_decision = event_data
+	_show_planet_decision(event_data)
+
+
+func _show_planet_decision(event_data: Dictionary) -> void:
+	## Displays a decision popup in the message log area.
+	if _decision_container != null:
+		_decision_container.queue_free()
+
+	_decision_container = VBoxContainer.new()
+	_decision_container.add_theme_constant_override("separation", 4)
+
+	var sep: HSeparator = HSeparator.new()
+	_decision_container.add_child(sep)
+
+	var text_lbl: RichTextLabel = RichTextLabel.new()
+	text_lbl.bbcode_enabled = true
+	text_lbl.fit_content = true
+	text_lbl.scroll_active = false
+	text_lbl.text = "[color=#E6D159]%s[/color]" % event_data.get("text", "")
+	text_lbl.custom_minimum_size = Vector2(0, 40)
+	_decision_container.add_child(text_lbl)
+
+	var options: Array = event_data.get("options", [])
+	for i: int in range(options.size()):
+		var btn: Button = Button.new()
+		btn.text = options[i].get("text", "Option %d" % (i + 1))
+		btn.custom_minimum_size = Vector2(0, 28)
+		btn.add_theme_font_size_override("font_size", 12)
+		btn.pressed.connect(_on_planet_decision_choice.bind(i))
+		_decision_container.add_child(btn)
+
+	_decision_container.add_child(HSeparator.new())
+
+	# Add before the message log
+	var parent: Node = message_log.get_parent()
+	parent.add_child(_decision_container)
+	parent.move_child(_decision_container, message_log.get_index())
+
+
+func _on_planet_decision_choice(choice: int) -> void:
+	if _decision_container != null:
+		_decision_container.queue_free()
+		_decision_container = null
+
+	var result_text: String = CrewEventGenerator.resolve_decision(
+		_pending_decision.get("id", ""), choice, _pending_decision)
+
+	_append_log("[color=#F7FAFC]  → %s[/color]" % result_text)
+	_pending_decision = {}
+	_update_ship_info()

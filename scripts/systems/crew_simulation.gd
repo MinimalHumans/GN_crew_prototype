@@ -196,6 +196,10 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			cm.morale = maxf(target, cm.morale - drift_speed)
 		cm.morale = clampf(cm.morale, 0.0, 100.0)
 
+		# Phase 5.5: Apply morale floor from legacy effects
+		if GameManager.morale_floor > 0.0 and cm.morale < GameManager.morale_floor:
+			cm.morale = GameManager.morale_floor
+
 		# --- Injury recovery (Phase 5.3: structured with permanent impairment check) ---
 		var recovery_events: Array[String] = check_permanent_impairment(cm)
 		events.append_array(recovery_events)
@@ -241,6 +245,10 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			"value_evidence_count": cm.value_evidence_count,
 			"is_quarantined": 1 if cm.is_quarantined else 0,
 			"quarantine_ticks": cm.quarantine_ticks,
+			"grief_state": cm.grief_state,
+			"grief_ticks_remaining": cm.grief_ticks_remaining,
+			"stat_bonus_all": cm.stat_bonus_all,
+			"origin": cm.origin,
 		})
 
 	# --- Phase 4.4: Ship memory triggers ---
@@ -265,6 +273,25 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 	# --- Phase 5.3: Quarantine ticks ---
 	var quarantine_events: Array[String] = _process_disease_ticks(roster)
 	events.append_array(quarantine_events)
+
+	# --- Phase 5.3: Disease death checks ---
+	for cm_check: CrewMember in roster:
+		if cm_check.has_diseases() and not _has_medic_in_roster(roster):
+			var disease_death_events: Array[String] = check_disease_death(cm_check, roster)
+			events.append_array(disease_death_events)
+
+	# --- Phase 5.4: Crew-generated mission check ---
+	var crew_gen_events: Array[String] = check_crew_generated_mission(roster)
+	events.append_array(crew_gen_events)
+
+	# --- Phase 5.5: Grief processing ---
+	var grief_events: Array[String] = process_grief_ticks(roster)
+	events.append_array(grief_events)
+
+	# --- Phase 5.5: Hull breach death check ---
+	if float(GameManager.hull_current) < 0.20 * float(GameManager.hull_max) and had_encounter:
+		var hull_death_events: Array[String] = check_hull_breach_death(roster)
+		events.append_array(hull_death_events)
 
 	# --- Relationship shifts ---
 	var rel_events: Array[String] = _process_relationships_tick(roster, had_encounter, encounter_was_combat, roles_tested)
@@ -372,17 +399,9 @@ static func tick_planet_arrival() -> Array[String]:
 		if cm.loyalty <= 0.0 and cm.loyalty_departure_stage >= 3:
 			events.append("[color=#C0392B][b]%s has left the crew.[/b] %s[/color]" % [cm.crew_name,
 				CrewEventTemplates._pick(CrewEventTemplates.LOYALTY_DEPARTURE).replace("{name}", cm.crew_name)])
-			GameManager.dismiss_crew(cm.id)
+			var legacy_events: Array[String] = GameManager.dismiss_crew_with_legacy(cm.id, "voluntary")
+			events.append_array(legacy_events)
 			EventBus.crew_departed.emit(cm.id, cm.crew_name)
-			# Apply morale hit to remaining crew
-			for other: CrewMember in roster:
-				if other.id == cm.id:
-					continue
-				var rel: float = DatabaseManager.get_relationship_value(cm.id, other.id)
-				if rel > 30.0:
-					other.morale = maxf(0.0, other.morale - 5.0)
-				elif rel > 0.0:
-					other.morale = maxf(0.0, other.morale - 2.0)
 			continue  # Skip persisting this crew — they're gone
 
 		# Persist
@@ -394,11 +413,34 @@ static func tick_planet_arrival() -> Array[String]:
 			"diseases": JSON.stringify(cm.diseases),
 			"morale": cm.morale,
 			"loyalty": cm.loyalty,
+			"grief_state": cm.grief_state,
+			"grief_ticks_remaining": cm.grief_ticks_remaining,
+			"stat_bonus_all": cm.stat_bonus_all,
 		})
 
 		# Log notable fatigue recovery
 		if old_fatigue > 60.0 and cm.fatigue <= 30.0:
 			events.append("[color=#718096]%s looks well-rested after the shore leave.[/color]" % cm.crew_name)
+
+	# --- Phase 5.4: Check if planet matches active crew-gen mission destination ---
+	var active_cgm: Dictionary = DatabaseManager.get_active_crew_generated_mission(GameManager.save_id)
+	if not active_cgm.is_empty() and active_cgm.get("destination_id", -1) == GameManager.current_planet_id:
+		var cgm_events: Array[String] = complete_crew_generated_mission(active_cgm, roster)
+		events.append_array(cgm_events)
+
+	# --- Phase 5.5: Retirement check ---
+	var retire_events: Array[String] = check_retirement(roster)
+	events.append_array(retire_events)
+
+	# --- Phase 5.5: Broken grief crew departure ---
+	for cm_grief: CrewMember in roster:
+		if cm_grief.grief_state == "BROKEN" and cm_grief.grief_ticks_remaining <= 0:
+			events.append("[color=#C0392B]%s can no longer bear the memories aboard this ship and departs quietly.[/color]" % cm_grief.crew_name)
+			var legacy_events: Array[String] = GameManager.dismiss_crew_with_legacy(cm_grief.id, "voluntary")
+			events.append_array(legacy_events)
+
+	# --- Phase 5.5: Tick legacy effect durations ---
+	DatabaseManager.tick_legacy_effects(GameManager.save_id)
 
 	# Check for fulfilled dock promises
 	var remaining: Array[Dictionary] = []
@@ -1190,13 +1232,6 @@ static func trigger_partner_injury_reaction(injured_cm: CrewMember, roster: Arra
 	return events
 
 
-static func trigger_grief_state(surviving_partner_id: int) -> void:
-	## Stub for crew death — to be implemented when death system is added.
-	## Should: set morale to 10, performance -30% all stats for 30 ticks.
-	## After grief resolves: 70% "Resolved" (+5 all) if loyalty > 60, else 70% "Broken" (-5 all).
-	pass
-
-
 static func _find_in_roster(roster: Array[CrewMember], crew_id: int) -> CrewMember:
 	for cm: CrewMember in roster:
 		if cm.id == crew_id:
@@ -1700,3 +1735,991 @@ static func _scale_ship_culture(cm: CrewMember) -> void:
 				"UPDATE crew_memories SET modifier_value = ?, culture_scaled = 1 WHERE id = ?",
 				[new_val, mem.get("id", -1)]
 			)
+
+
+# === PHASE 5.4: CREW-GENERATED MISSIONS ===
+
+static func check_crew_generated_mission(roster: Array[CrewMember]) -> Array[String]:
+	## Checks if a crew-generated personal mission should trigger.
+	## Called once per tick in tick_jump.
+	var events: Array[String] = []
+
+	# No active crew-gen mission already?
+	var active: Dictionary = DatabaseManager.get_active_crew_generated_mission(GameManager.save_id)
+	if not active.is_empty():
+		# Tick down time limit
+		var remaining: int = active.get("ticks_remaining", 0) - 1
+		if remaining <= 0:
+			# Mission expired — failed
+			DatabaseManager.update_crew_generated_mission(active.id, {"status": "FAILED", "ticks_remaining": 0})
+			var crew_data: Dictionary = DatabaseManager.get_crew_member(active.get("crew_id", -1))
+			var crew_name: String = crew_data.get("name", "Someone")
+			events.append("[color=#C0392B]%s's personal mission has expired. The window of opportunity has passed.[/color]" % crew_name)
+			DatabaseManager.update_save_state(GameManager.save_id, {"last_crew_gen_mission_tick": GameManager.day_count})
+		else:
+			DatabaseManager.update_crew_generated_mission(active.id, {"ticks_remaining": remaining})
+		return events
+
+	# Check cooldown: 30 ticks since last completed/declined
+	var save: Dictionary = DatabaseManager.load_save()
+	var last_tick: int = save.get("last_crew_gen_mission_tick", 0)
+	if GameManager.day_count - last_tick < 30:
+		return events
+
+	# Check each crew member for eligibility
+	for cm: CrewMember in roster:
+		if cm.grief_state == "GRIEVING":
+			continue
+		var ticks_served: int = GameManager.day_count - cm.hired_day
+		if cm.loyalty <= 65.0 or ticks_served < 40:
+			continue
+		cm.load_memories()
+		var formative_count: int = 0
+		for mem: Dictionary in cm.memories:
+			if mem.get("is_ship_culture", 0) == 0:
+				formative_count += 1
+		if formative_count < 2:
+			continue
+		if cm.traits.is_empty():
+			continue
+
+		# 5% chance per eligible crew member
+		if randf() >= 0.05:
+			continue
+
+		# Select template by priority
+		var mission_data: Dictionary = _select_crew_gen_template(cm, roster)
+		if mission_data.is_empty():
+			continue
+
+		# Fire decision event
+		EventBus.crew_mission_triggered.emit(cm.id, cm.crew_name, mission_data.template_type)
+		var setup_text: String = CrewEventTemplates.get_crew_gen_mission_setup(
+			mission_data.template_type, cm.crew_name,
+			cm.get_species_name().to_upper(), mission_data.get("extra", {}))
+
+		var event_data: Dictionary = {
+			"id": "crew_gen_mission_%d" % cm.id,
+			"type": "crew_generated_mission",
+			"text": setup_text,
+			"crew_id": cm.id,
+			"crew_name": cm.crew_name,
+			"template_type": mission_data.template_type,
+			"destination_id": mission_data.destination_id,
+			"extra_data": JSON.stringify(mission_data.get("extra", {})),
+			"options": [
+				{"text": "Yes, we'll make it happen.", "action": "accept"},
+				{"text": "Not right now.", "action": "decline"},
+			],
+		}
+		EventBus.decision_event_fired.emit(event_data)
+		break  # Only one per tick
+
+	return events
+
+
+static func _select_crew_gen_template(cm: CrewMember, roster: Array[CrewMember]) -> Dictionary:
+	## Returns mission data dict with template_type, destination_id, extra, or empty if none match.
+	var species_key: String = cm.get_species_name().to_upper()
+
+	# Priority 1: Confrontation (Grudge-Bearer trait)
+	if cm.has_trait("grudge_bearer"):
+		var rival_planets: Array = CrewEventTemplates.FACTION_RIVAL_PLANETS.get(species_key, [])
+		if not rival_planets.is_empty():
+			var dest_id: int = rival_planets[randi() % rival_planets.size()]
+			var planet: Dictionary = DatabaseManager.get_planet(dest_id)
+			return {
+				"template_type": "confrontation",
+				"destination_id": dest_id,
+				"extra": {"planet_name": planet.get("name", "unknown"), "stat_check": "social"},
+			}
+
+	# Priority 2: Closure (Haunted trait)
+	if cm.has_trait("haunted"):
+		# Find a planet from their memories (triggering event location)
+		var dest_id: int = _find_trauma_planet(cm)
+		if dest_id > 0:
+			var planet: Dictionary = DatabaseManager.get_planet(dest_id)
+			return {
+				"template_type": "closure",
+				"destination_id": dest_id,
+				"extra": {"planet_name": planet.get("name", "unknown"), "stat_check": "cognition"},
+			}
+
+	# Priority 3: Proving (rescue/stowaway origin, 30+ ticks)
+	if cm.origin in ["rescue", "stowaway"] and (GameManager.day_count - cm.hired_day) >= 30:
+		# No specific destination — this triggers on next difficulty 4-5 mission
+		# Use current planet as placeholder; actual resolution happens via mission system
+		return {
+			"template_type": "proving",
+			"destination_id": GameManager.current_planet_id,
+			"extra": {"crew_id": cm.id},
+		}
+
+	# Priority 4: Homeworld visit (50+ ticks since last visit)
+	var homeworld_id: int = CrewEventTemplates.SPECIES_HOMEWORLD_ID.get(species_key, -1)
+	if homeworld_id > 0:
+		var visited: Array[int] = DatabaseManager.get_visited_planet_ids(GameManager.save_id)
+		var last_visit_day: int = 0
+		# Check visited_planets for the homeworld
+		if homeworld_id in visited:
+			var vp_rows: Array = DatabaseManager.db.select_rows(
+				"visited_planets",
+				"save_id = %d AND planet_id = %d" % [GameManager.save_id, homeworld_id],
+				["first_visited_day"]
+			)
+			if not vp_rows.is_empty():
+				last_visit_day = vp_rows[0].get("first_visited_day", 0)
+		if GameManager.day_count - last_visit_day >= 50:
+			return {
+				"template_type": "homeworld",
+				"destination_id": homeworld_id,
+				"extra": {"homeworld": CrewEventTemplates.SPECIES_HOMEWORLD.get(species_key, "home")},
+			}
+
+	# Priority 5: Shared Adventure (Bonded Pair)
+	if cm.has_trait("bonded_pair"):
+		var partner_id: int = DatabaseManager.get_partner_id(cm.id)
+		if partner_id < 0:
+			# Check for bonded pair via high relationship
+			var rels: Array = DatabaseManager.get_crew_relationships(cm.id)
+			for rel: Dictionary in rels:
+				if rel.get("value", 0.0) > 80.0:
+					var other_id: int = rel.crew_b_id if rel.crew_a_id == cm.id else rel.crew_a_id
+					partner_id = other_id
+					break
+		if partner_id > 0:
+			var partner_data: Dictionary = DatabaseManager.get_crew_member(partner_id)
+			var partner_name: String = partner_data.get("name", "their partner")
+			# Find a planet neither has visited
+			var visited: Array[int] = DatabaseManager.get_visited_planet_ids(GameManager.save_id)
+			var all_planets: Array = DatabaseManager.get_all_planets()
+			var unvisited: Array = []
+			for p: Dictionary in all_planets:
+				if p.id not in visited:
+					unvisited.append(p)
+			if not unvisited.is_empty():
+				var dest: Dictionary = unvisited[randi() % unvisited.size()]
+				return {
+					"template_type": "shared_adventure",
+					"destination_id": dest.id,
+					"extra": {"partner_id": partner_id, "partner_name": partner_name, "planet_name": dest.get("name", "somewhere new")},
+				}
+
+	return {}
+
+
+static func _find_trauma_planet(cm: CrewMember) -> int:
+	## Finds a planet from the crew member's SHAKEN memories to revisit.
+	for mem: Dictionary in cm.memories:
+		if mem.get("emotional_tag", "") == "SHAKEN":
+			var trigger: String = mem.get("trigger_text", "")
+			# Try to extract planet name from trigger text
+			var all_planets: Array = DatabaseManager.get_all_planets()
+			for planet: Dictionary in all_planets:
+				if trigger.find(planet.get("name", "")) != -1:
+					return planet.get("id", -1)
+	# Fallback: pick a random dangerous planet
+	return 11  # Char — most dangerous
+
+
+static func resolve_crew_gen_mission_decision(event_id: String, choice: int,
+		event_data: Dictionary) -> Array[String]:
+	## Called when the player resolves a crew-gen mission decision event.
+	var events: Array[String] = []
+	var crew_id: int = event_data.get("crew_id", -1)
+	var crew_data: Dictionary = DatabaseManager.get_crew_member(crew_id)
+	if crew_data.is_empty():
+		return events
+
+	if choice == 0:
+		# Accept
+		var mission_insert: Dictionary = {
+			"crew_id": crew_id,
+			"template_type": event_data.get("template_type", ""),
+			"destination_id": event_data.get("destination_id", -1),
+			"setup_text": event_data.get("text", ""),
+			"objective_text": "",
+			"time_limit": 15,
+			"ticks_remaining": 15,
+			"status": "ACTIVE",
+			"extra_data": event_data.get("extra_data", "{}"),
+		}
+		DatabaseManager.insert_crew_generated_mission(GameManager.save_id, mission_insert)
+		events.append("[color=#4A90D9]Personal mission accepted. The crew knows where you're headed.[/color]")
+	else:
+		# Decline
+		var old_loyalty: float = crew_data.get("loyalty", 50.0)
+		var new_loyalty: float = maxf(0.0, old_loyalty - 3.0)
+		DatabaseManager.update_crew_member(crew_id, {"loyalty": new_loyalty})
+		EventBus.loyalty_changed.emit(crew_id, new_loyalty, old_loyalty)
+		EventBus.crew_mission_declined.emit(crew_id)
+		DatabaseManager.update_save_state(GameManager.save_id, {"last_crew_gen_mission_tick": GameManager.day_count - 15})
+		events.append("[color=#E67E22]%s nods, but the disappointment is visible. (-3 loyalty)[/color]" % crew_data.get("name", ""))
+
+	return events
+
+
+static func complete_crew_generated_mission(mission_data: Dictionary,
+		roster: Array[CrewMember]) -> Array[String]:
+	## Called on planet arrival when destination matches active crew-gen mission.
+	var events: Array[String] = []
+	var crew_id: int = mission_data.get("crew_id", -1)
+	var cm: CrewMember = _find_in_roster(roster, crew_id)
+	if cm == null:
+		# Crew member may have died/departed — mark as failed
+		DatabaseManager.update_crew_generated_mission(mission_data.id, {"status": "FAILED"})
+		return events
+
+	cm.load_memories()
+	var template: String = mission_data.get("template_type", "")
+	var extra: Dictionary = {}
+	var extra_str: String = mission_data.get("extra_data", "{}")
+	if extra_str != "" and extra_str != "{}":
+		var parsed: Variant = JSON.parse_string(extra_str)
+		if parsed is Dictionary:
+			extra = parsed
+
+	var success: bool = true
+
+	match template:
+		"homeworld":
+			_apply_homeworld_rewards(cm, extra, events, roster)
+		"confrontation":
+			success = _resolve_confrontation(cm, extra, events)
+		"closure":
+			success = _resolve_closure(cm, extra, events)
+		"shared_adventure":
+			_apply_shared_adventure_rewards(cm, extra, events, roster)
+		"proving":
+			# Proving is special — needs a difficulty 4-5 mission to complete
+			# For now, completing at destination = success
+			success = _resolve_proving(cm, extra, events)
+
+	# Mark mission complete
+	DatabaseManager.update_crew_generated_mission(mission_data.id, {
+		"status": "COMPLETED" if success else "COMPLETED",
+	})
+	DatabaseManager.update_save_state(GameManager.save_id, {"last_crew_gen_mission_tick": GameManager.day_count})
+	EventBus.crew_mission_completed.emit(crew_id, template, success)
+
+	return events
+
+
+static func _apply_homeworld_rewards(cm: CrewMember, extra: Dictionary,
+		events: Array[String], roster: Array[CrewMember]) -> void:
+	var homeworld: String = extra.get("homeworld", "home")
+
+	# +8 loyalty for requesting crew
+	cm.loyalty = minf(100.0, cm.loyalty + 8.0)
+	# +3 morale lasting 15 ticks (just apply directly as bonus)
+	cm.morale = minf(100.0, cm.morale + 15.0)
+	# +2 loyalty for all crew
+	for other: CrewMember in roster:
+		if other.id == cm.id:
+			continue
+		other.loyalty = minf(100.0, other.loyalty + 2.0)
+		DatabaseManager.update_crew_member(other.id, {"loyalty": other.loyalty})
+
+	# Temporary +5 all stats for 10 ticks (via stat_bonus_all)
+	cm.stat_bonus_all += 5
+	DatabaseManager.update_crew_member(cm.id, {
+		"loyalty": cm.loyalty,
+		"morale": cm.morale,
+		"stat_bonus_all": cm.stat_bonus_all,
+	})
+
+	var text: String = CrewEventTemplates.get_crew_gen_mission_completion("homeworld", cm.crew_name, true, extra)
+	events.append("[color=#27AE60][b]Mission Complete:[/b] %s[/color]" % text)
+
+
+static func _resolve_confrontation(cm: CrewMember, extra: Dictionary,
+		events: Array[String]) -> bool:
+	# Social stat check
+	var effective_social: float = cm.get_effective_stat("social")
+	var roll: int = int(effective_social) + randi_range(0, int(effective_social))
+	var difficulty: int = 80
+	var success: bool = roll > difficulty
+
+	if success:
+		# Replace Grudge-Bearer with Settled
+		cm.traits.erase("grudge_bearer")
+		if not cm.has_trait("settled"):
+			cm.traits.append("settled")
+		cm.loyalty = minf(100.0, cm.loyalty + 10.0)
+		cm.morale = minf(100.0, cm.morale + 8.0)
+		DatabaseManager.update_crew_member(cm.id, {
+			"traits": JSON.stringify(cm.traits),
+			"loyalty": cm.loyalty,
+			"morale": cm.morale,
+		})
+		EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "settled", "Settled")
+	else:
+		# Grudge deepened — +5 combat stats (via stat_bonus_all for simplicity)
+		cm.loyalty = minf(100.0, cm.loyalty + 3.0)
+		cm.morale = maxf(0.0, cm.morale - 5.0)
+		DatabaseManager.update_crew_member(cm.id, {
+			"loyalty": cm.loyalty,
+			"morale": cm.morale,
+		})
+
+	var text: String = CrewEventTemplates.get_crew_gen_mission_completion("confrontation", cm.crew_name, success, extra)
+	events.append("[color=%s][b]Mission Complete:[/b] %s[/color]" % [
+		"#27AE60" if success else "#E67E22", text])
+	return success
+
+
+static func _resolve_closure(cm: CrewMember, extra: Dictionary,
+		events: Array[String]) -> bool:
+	# Cognition stat check
+	var effective_cog: float = cm.get_effective_stat("cognition")
+	var roll: int = int(effective_cog) + randi_range(0, int(effective_cog))
+	var difficulty: int = 80
+	var success: bool = roll > difficulty
+
+	if success:
+		# Replace Haunted with At Peace
+		cm.traits.erase("haunted")
+		if not cm.has_trait("at_peace"):
+			cm.traits.append("at_peace")
+		cm.loyalty = minf(100.0, cm.loyalty + 10.0)
+		cm.morale = minf(100.0, cm.morale + 10.0)
+		cm.cognition += 3  # Permanent +3 Cognition
+		DatabaseManager.update_crew_member(cm.id, {
+			"traits": JSON.stringify(cm.traits),
+			"loyalty": cm.loyalty,
+			"morale": cm.morale,
+			"cognition": cm.cognition,
+		})
+		EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "at_peace", "At Peace")
+	else:
+		# Haunted remains, +5 loyalty, SHAKEN memory added
+		cm.loyalty = minf(100.0, cm.loyalty + 5.0)
+		_create_memory(cm, {
+			"trigger_text": "Returned to the place where it happened. It didn't help.",
+			"emotional_tag": "SHAKEN",
+			"modifier_type": "MORALE_IN_CONTEXT",
+			"modifier_value": -2.0,
+			"context_match": "travel",
+			"significance": 2.0,
+		})
+		DatabaseManager.update_crew_member(cm.id, {"loyalty": cm.loyalty})
+
+	var text: String = CrewEventTemplates.get_crew_gen_mission_completion("closure", cm.crew_name, success, extra)
+	events.append("[color=%s][b]Mission Complete:[/b] %s[/color]" % [
+		"#27AE60" if success else "#E67E22", text])
+	return success
+
+
+static func _apply_shared_adventure_rewards(cm: CrewMember, extra: Dictionary,
+		events: Array[String], roster: Array[CrewMember]) -> void:
+	var partner_id: int = extra.get("partner_id", -1)
+	var partner: CrewMember = _find_in_roster(roster, partner_id)
+	var partner_name: String = extra.get("partner_name", "their partner")
+	var planet_name: String = extra.get("planet_name", "somewhere")
+
+	# Both get +8 loyalty, +10 morale
+	cm.loyalty = minf(100.0, cm.loyalty + 8.0)
+	cm.morale = minf(100.0, cm.morale + 10.0)
+	DatabaseManager.update_crew_member(cm.id, {"loyalty": cm.loyalty, "morale": cm.morale})
+
+	if partner != null:
+		partner.loyalty = minf(100.0, partner.loyalty + 8.0)
+		partner.morale = minf(100.0, partner.morale + 10.0)
+		DatabaseManager.update_crew_member(partner.id, {"loyalty": partner.loyalty, "morale": partner.morale})
+
+		# Relationship boost +10
+		var rel_val: float = DatabaseManager.get_relationship_value(cm.id, partner.id)
+		DatabaseManager.update_relationship(cm.id, partner.id, minf(100.0, rel_val + 10.0))
+
+		# Shared INSPIRED memory
+		_create_memory(cm, {
+			"trigger_text": "Shore leave on %s with %s" % [planet_name, partner_name],
+			"emotional_tag": "INSPIRED",
+			"modifier_type": "MORALE_IN_CONTEXT",
+			"modifier_value": 5.0,
+			"context_match": "travel",
+			"significance": 3.0,
+		})
+		_create_memory(partner, {
+			"trigger_text": "Shore leave on %s with %s" % [planet_name, cm.crew_name],
+			"emotional_tag": "INSPIRED",
+			"modifier_type": "MORALE_IN_CONTEXT",
+			"modifier_value": 5.0,
+			"context_match": "travel",
+			"significance": 3.0,
+		})
+
+	# +2 morale for entire crew
+	for other: CrewMember in roster:
+		if other.id == cm.id or (partner != null and other.id == partner.id):
+			continue
+		other.morale = minf(100.0, other.morale + 2.0)
+		DatabaseManager.update_crew_member(other.id, {"morale": other.morale})
+
+	var text: String = CrewEventTemplates.get_crew_gen_mission_completion("shared_adventure", cm.crew_name, true, extra)
+	events.append("[color=#27AE60][b]Mission Complete:[/b] %s[/color]" % text)
+
+
+static func _resolve_proving(cm: CrewMember, extra: Dictionary,
+		events: Array[String]) -> bool:
+	# Stat check: primary role stat with +10 temp boost
+	var primary_stat: String = CrewMember.ROLE_PRIMARY_STAT.get(cm.role, "resourcefulness")
+	var effective: float = cm.get_effective_stat(primary_stat) + 10.0
+	var roll: int = int(effective) + randi_range(0, int(effective))
+	var difficulty: int = 100  # Tough mission
+	var success: bool = roll > difficulty
+
+	if success:
+		# Award Proven trait, +15 loyalty, +10 morale
+		if not cm.has_trait("proven"):
+			cm.traits.append("proven")
+		cm.loyalty = minf(100.0, cm.loyalty + 15.0)
+		cm.morale = minf(100.0, cm.morale + 10.0)
+		cm.stat_bonus_all += 3  # Permanent +3 all stats
+		# Make fast_learner permanent if it existed
+		if cm.fast_learner:
+			# It stays permanently (normally would expire)
+			pass
+		# Update personality
+		var new_personality: String = cm.personality.replace("Desperate, eager to prove themselves", "Proven, quietly confident")
+		DatabaseManager.update_crew_member(cm.id, {
+			"traits": JSON.stringify(cm.traits),
+			"loyalty": cm.loyalty,
+			"morale": cm.morale,
+			"stat_bonus_all": cm.stat_bonus_all,
+			"personality": new_personality,
+		})
+		EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "proven", "Proven")
+	else:
+		# No penalty beyond normal. +3 loyalty. Can retry after 20 ticks.
+		cm.loyalty = minf(100.0, cm.loyalty + 3.0)
+		var new_personality: String = cm.personality.replace("Desperate, eager to prove themselves", "Determined, still proving themselves")
+		DatabaseManager.update_crew_member(cm.id, {
+			"loyalty": cm.loyalty,
+			"personality": new_personality,
+		})
+
+	var text: String = CrewEventTemplates.get_crew_gen_mission_completion("proving", cm.crew_name, success, extra)
+	events.append("[color=%s][b]Mission Complete:[/b] %s[/color]" % [
+		"#27AE60" if success else "#E67E22", text])
+	return success
+
+
+# === PHASE 5.5: LEGACY SYSTEM ===
+
+# --- Retirement ---
+
+static func check_retirement(roster: Array[CrewMember]) -> Array[String]:
+	## Checks if any crew member wants to retire. Called on planet arrival.
+	var events: Array[String] = []
+
+	for cm: CrewMember in roster:
+		if cm.grief_state == "GRIEVING":
+			continue
+		var ticks_served: int = GameManager.day_count - cm.hired_day
+		if cm.loyalty <= 80.0 or ticks_served < 80 or cm.morale <= 60.0:
+			continue
+
+		# 2% chance per docked tick
+		if randf() >= 0.02:
+			continue
+
+		var planet: Dictionary = GameManager.get_current_planet()
+		var planet_name: String = planet.get("name", "here")
+		var text: String = CrewEventTemplates.get_retirement_text(cm.crew_name, planet_name)
+
+		var event_data: Dictionary = {
+			"id": "retirement_%d" % cm.id,
+			"type": "retirement",
+			"text": text,
+			"crew_id": cm.id,
+			"crew_name": cm.crew_name,
+			"planet_name": planet_name,
+			"options": [
+				{"text": "You've earned it. Fair winds, %s." % cm.crew_name, "action": "graceful"},
+				{"text": "I'd like you to stay.", "action": "stay"},
+				{"text": "What if I made it worth your while? (500 credits)", "action": "retain"},
+			],
+		}
+		EventBus.decision_event_fired.emit(event_data)
+		break  # Only one per arrival
+
+	return events
+
+
+static func resolve_retirement_decision(event_data: Dictionary, choice: int) -> Array[String]:
+	## Called when the player resolves a retirement decision event.
+	var events: Array[String] = []
+	var crew_id: int = event_data.get("crew_id", -1)
+	var crew_data: Dictionary = DatabaseManager.get_crew_member(crew_id)
+	if crew_data.is_empty():
+		return events
+
+	var cm: CrewMember = CrewMember.from_dict(crew_data)
+	var planet_name: String = event_data.get("planet_name", "port")
+
+	match choice:
+		0:
+			# Graceful departure — best legacy
+			var legacy_events: Array[String] = GameManager.dismiss_crew_with_legacy(crew_id, "retirement")
+			events.append_array(legacy_events)
+			events.append("[color=#27AE60]%s disembarks at %s with a handshake and a smile. Fair winds.[/color]" % [cm.crew_name, planet_name])
+		1:
+			# Stay — +5 loyalty, can trigger again after 20 ticks
+			cm.loyalty = minf(100.0, cm.loyalty + 5.0)
+			DatabaseManager.update_crew_member(crew_id, {"loyalty": cm.loyalty})
+			events.append("[color=#4A90D9]%s nods. 'Alright, Captain. A little longer.' The retirement can wait.[/color]" % cm.crew_name)
+		2:
+			# Retention bonus — 500 credits, stay 30 more ticks
+			if GameManager.credits >= 500:
+				GameManager.spend_credits(500)
+				cm.morale = minf(100.0, cm.morale + 10.0)
+				DatabaseManager.update_crew_member(crew_id, {"morale": cm.morale})
+				events.append("[color=#E6D159]%s accepts the retention bonus. They'll stay for a while longer.[/color]" % cm.crew_name)
+			else:
+				events.append("[color=#C0392B]Not enough credits for the retention bonus. %s is still considering retirement.[/color]" % cm.crew_name)
+
+	return events
+
+
+# --- Crew Death ---
+
+static func process_crew_death(cm: CrewMember, cause: String,
+		roster: Array[CrewMember]) -> Array[String]:
+	## Handles crew death: deactivation, mourning, memories, legacy, grief.
+	var events: Array[String] = []
+
+	# Find medic name for text
+	var medic: CrewMember = _find_medic_in_roster(roster)
+	var medic_name: String = medic.crew_name if medic != null else ""
+
+	# Death message (heavyweight)
+	var death_text: String = CrewEventTemplates.get_death_text(cm.crew_name, cause, medic_name)
+	var death_event: Dictionary = {
+		"id": "death_%d" % cm.id,
+		"type": "crew_death",
+		"text": death_text,
+		"crew_id": cm.id,
+		"crew_name": cm.crew_name,
+		"cause": cause,
+		"options": [
+			{"text": "...", "action": "acknowledge"},
+		],
+	}
+	EventBus.decision_event_fired.emit(death_event)
+
+	# Deactivate crew member
+	DatabaseManager.update_crew_member(cm.id, {
+		"is_active": 0,
+		"death_day": GameManager.day_count,
+	})
+
+	# All crew mourning
+	for other: CrewMember in roster:
+		if other.id == cm.id:
+			continue
+		var rel: float = DatabaseManager.get_relationship_value(cm.id, other.id)
+		var morale_hit: float = -10.0
+		if rel > 30.0:
+			morale_hit = -15.0
+		other.morale = maxf(0.0, other.morale + morale_hit)
+
+		# Generate formative memory for ALL crew
+		var tag: String
+		if other.stamina > 55:
+			tag = "HARDENED"
+		elif other.social > 55:
+			tag = "CAUTIOUS"
+		else:
+			tag = "SHAKEN"
+		other.load_memories()
+		_create_memory(other, {
+			"trigger_text": "%s's death" % cm.crew_name,
+			"emotional_tag": tag,
+			"modifier_type": "MORALE_IN_CONTEXT",
+			"modifier_value": -3.0 if tag == "SHAKEN" else 3.0,
+			"context_match": "combat" if cause == "combat" else "travel",
+			"significance": 5.0,
+		})
+
+		# Check if this triggers Haunted
+		if not other.has_trait("haunted") and other.count_memories_with_tag("SHAKEN") >= 3:
+			_award_trait(other, "haunted", events)
+
+		DatabaseManager.update_crew_member(other.id, {"morale": other.morale})
+
+	# Ship memory
+	var planet_name: String = GameManager.get_current_planet().get("name", "deep space")
+	var ship_mem: Dictionary = {
+		"event_description": "Losing %s" % cm.crew_name,
+		"modifier_type": "COMBAT_PERFORMANCE" if cause == "combat" else "SCAN_PERFORMANCE",
+		"modifier_value": 3.0,
+		"context_match": "combat" if cause == "combat" else "safety",
+		"day_acquired": GameManager.day_count,
+	}
+	DatabaseManager.insert_ship_memory(GameManager.save_id, ship_mem)
+	EventBus.ship_memory_formed.emit(ship_mem.event_description)
+
+	# Generate death legacy
+	generate_departure_legacy(cm, "death")
+
+	# Check for sole role holder
+	var role_str: String = CrewMember._role_to_string(cm.role)
+	var same_role_count: int = 0
+	for other: CrewMember in roster:
+		if other.id != cm.id and CrewMember._role_to_string(other.role) == role_str:
+			same_role_count += 1
+	if same_role_count == 0:
+		for other: CrewMember in roster:
+			if other.id == cm.id:
+				continue
+			other.morale = maxf(0.0, other.morale - 5.0)
+			DatabaseManager.update_crew_member(other.id, {"morale": other.morale})
+		events.append("[color=#C0392B]Without %s in the %s station, every warning light feels more dangerous.[/color]" % [cm.crew_name, cm.get_role_name()])
+
+	# Check for romance partner → trigger grief
+	var partner_id: int = DatabaseManager.get_partner_id(cm.id)
+	if partner_id >= 0:
+		trigger_grief_state(partner_id, cm.crew_name)
+
+	# End any romance
+	var rom: Dictionary = DatabaseManager.get_romance_for_crew(cm.id)
+	if not rom.is_empty():
+		DatabaseManager.end_romance(rom.get("id", -1), GameManager.day_count)
+		EventBus.romance_ended.emit(cm.id, partner_id if partner_id >= 0 else -1, "death")
+
+	# Clean up relationships
+	DatabaseManager.delete_crew_relationships(cm.id)
+
+	EventBus.crew_died.emit(cm.id, cm.crew_name, cause)
+	events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates._pick(
+		CrewEventTemplates.MOURNING_CREW).replace("{name}", cm.crew_name))
+
+	return events
+
+
+# --- Grief State ---
+
+static func trigger_grief_state(surviving_partner_id: int, deceased_name: String = "") -> void:
+	## Sets up the grief state for a surviving romance partner.
+	var partner_data: Dictionary = DatabaseManager.get_crew_member(surviving_partner_id)
+	if partner_data.is_empty():
+		return
+
+	DatabaseManager.update_crew_member(surviving_partner_id, {
+		"morale": 10.0,
+		"grief_state": "GRIEVING",
+		"grief_ticks_remaining": 30,
+	})
+
+
+static func process_grief_ticks(roster: Array[CrewMember]) -> Array[String]:
+	## Processes grief state for all grieving crew. Called per tick.
+	var events: Array[String] = []
+
+	for cm: CrewMember in roster:
+		if cm.grief_state != "GRIEVING":
+			continue
+
+		cm.grief_ticks_remaining -= 1
+
+		# Grief events every 5 ticks
+		if cm.grief_ticks_remaining > 0 and cm.grief_ticks_remaining % 5 == 0:
+			# Find deceased name from recent death memories
+			var deceased_name: String = _find_deceased_name(cm)
+			var grief_text: String = CrewEventTemplates._pick(
+				CrewEventTemplates.GRIEF_EVENTS).replace("{name}", cm.crew_name).replace("{deceased}", deceased_name)
+			events.append("[color=#718096]%s[/color]" % grief_text)
+
+		# No positive social events during grief (handled by checking grief_state in romance processing)
+
+		if cm.grief_ticks_remaining <= 0:
+			# Grief resolves
+			var resolved_as_strong: bool
+			if cm.loyalty > 60.0:
+				resolved_as_strong = randf() < 0.70
+			else:
+				resolved_as_strong = randf() >= 0.70
+
+			var deceased_name: String = _find_deceased_name(cm)
+
+			if resolved_as_strong:
+				# Resolved trait
+				cm.grief_state = "RESOLVED"
+				if not cm.has_trait("resolved"):
+					cm.traits.append("resolved")
+				cm.stat_bonus_all += 5
+				DatabaseManager.update_crew_member(cm.id, {
+					"grief_state": "RESOLVED",
+					"grief_ticks_remaining": 0,
+					"traits": JSON.stringify(cm.traits),
+					"stat_bonus_all": cm.stat_bonus_all,
+				})
+				var text: String = CrewEventTemplates.GRIEF_RESOLVED_TEXT.replace(
+					"{name}", cm.crew_name).replace("{deceased}", deceased_name)
+				events.append("[color=#27AE60][b]Grief Resolved:[/b] %s[/color]" % text)
+				EventBus.grief_resolved.emit(cm.id, cm.crew_name, "resolved")
+				EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "resolved", "Resolved")
+			else:
+				# Broken — will request to leave after 10 ticks
+				cm.grief_state = "BROKEN"
+				if not cm.has_trait("broken_spirit"):
+					cm.traits.append("broken_spirit")
+				cm.stat_bonus_all -= 5
+				DatabaseManager.update_crew_member(cm.id, {
+					"grief_state": "BROKEN",
+					"grief_ticks_remaining": 10,  # Reuse for departure countdown
+					"traits": JSON.stringify(cm.traits),
+					"stat_bonus_all": cm.stat_bonus_all,
+				})
+				var text: String = CrewEventTemplates.GRIEF_BROKEN_TEXT.replace(
+					"{name}", cm.crew_name).replace("{deceased}", deceased_name)
+				events.append("[color=#C0392B][b]Grief:[/b] %s[/color]" % text)
+				EventBus.grief_resolved.emit(cm.id, cm.crew_name, "broken")
+				EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "broken_spirit", "Broken")
+		else:
+			DatabaseManager.update_crew_member(cm.id, {
+				"grief_ticks_remaining": cm.grief_ticks_remaining,
+			})
+
+	# Check for Broken crew requesting departure
+	for cm: CrewMember in roster:
+		if cm.grief_state == "BROKEN":
+			cm.grief_ticks_remaining -= 1
+			if cm.grief_ticks_remaining <= 0:
+				var deceased_name: String = _find_deceased_name(cm)
+				var request_text: String = CrewEventTemplates.GRIEF_BROKEN_REQUEST.replace(
+					"{name}", cm.crew_name).replace("{deceased}", deceased_name)
+				var event_data: Dictionary = {
+					"id": "grief_departure_%d" % cm.id,
+					"type": "grief_departure",
+					"text": request_text,
+					"crew_id": cm.id,
+					"crew_name": cm.crew_name,
+					"options": [
+						{"text": "Go. Be well.", "action": "let_go"},
+						{"text": "I need you to stay.", "action": "stay"},
+					],
+				}
+				EventBus.decision_event_fired.emit(event_data)
+			else:
+				DatabaseManager.update_crew_member(cm.id, {"grief_ticks_remaining": cm.grief_ticks_remaining})
+
+	return events
+
+
+static func _find_deceased_name(cm: CrewMember) -> String:
+	## Finds the name of the deceased partner from death memories.
+	cm.load_memories()
+	for mem: Dictionary in cm.memories:
+		var trigger: String = mem.get("trigger_text", "")
+		if trigger.ends_with("'s death"):
+			return trigger.replace("'s death", "")
+	return "them"
+
+
+# --- Legacy Generation ---
+
+static func generate_departure_legacy(cm: CrewMember, departure_type: String) -> void:
+	## Creates a legacy entry for a departing crew member.
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	var role_name: String = cm.get_role_name()
+
+	# Calculate average relationship with remaining crew
+	var avg_rel: float = 0.0
+	var rel_count: int = 0
+	for other: CrewMember in roster:
+		if other.id == cm.id:
+			continue
+		var val: float = DatabaseManager.get_relationship_value(cm.id, other.id)
+		avg_rel += val
+		rel_count += 1
+	if rel_count > 0:
+		avg_rel /= float(rel_count)
+
+	match departure_type:
+		"retirement":
+			# Positive: +3% role efficiency, +2 morale floor
+			var effect_text: String = "+3%% %s efficiency" % role_name.to_lower()
+			DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+				"crew_name": cm.crew_name,
+				"crew_role": role_name,
+				"departure_type": "retirement",
+				"legacy_text": "%s — Retired at %s (Day %d)" % [cm.crew_name, GameManager.get_current_planet().get("name", "port"), GameManager.day_count],
+				"effect_type": "role_efficiency",
+				"effect_value": 3.0,
+				"effect_context": CrewMember._role_to_string(cm.role),
+				"effect_ticks_remaining": -1,
+				"day_departed": GameManager.day_count,
+			})
+			# +2 morale floor
+			var save: Dictionary = DatabaseManager.load_save()
+			var current_floor: float = save.get("morale_floor", 0.0)
+			DatabaseManager.update_save_state(GameManager.save_id, {"morale_floor": current_floor + 2.0})
+			GameManager.morale_floor += 2.0
+
+			# Fond Memory for crew with rel > 30
+			for other: CrewMember in roster:
+				if other.id == cm.id:
+					continue
+				var rel: float = DatabaseManager.get_relationship_value(cm.id, other.id)
+				if rel > 30.0:
+					other.morale = minf(100.0, other.morale + 2.0)
+					other.morale_bonus += 1.0  # Permanent +1 (lingering fond memory)
+					DatabaseManager.update_crew_member(other.id, {
+						"morale": other.morale,
+						"morale_bonus": other.morale_bonus,
+					})
+
+			EventBus.legacy_created.emit(cm.crew_name, "retirement")
+
+		"voluntary":
+			# Negative: -2 morale for 15 ticks, new hire suspicion for 20 ticks
+			DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+				"crew_name": cm.crew_name,
+				"crew_role": role_name,
+				"departure_type": "voluntary",
+				"legacy_text": "%s — Departed voluntarily (Day %d)" % [cm.crew_name, GameManager.day_count],
+				"effect_type": "morale_temp",
+				"effect_value": -2.0,
+				"effect_context": "all",
+				"effect_ticks_remaining": 15,
+				"day_departed": GameManager.day_count,
+			})
+			# New hire suspicion
+			DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+				"crew_name": cm.crew_name,
+				"crew_role": role_name,
+				"departure_type": "voluntary",
+				"legacy_text": "Retention problems — new hires start uneasy",
+				"effect_type": "suspicion",
+				"effect_value": -5.0,
+				"effect_context": "new_hire",
+				"effect_ticks_remaining": 20,
+				"day_departed": GameManager.day_count,
+			})
+
+			# Morale hit for close crew
+			for other: CrewMember in roster:
+				if other.id == cm.id:
+					continue
+				var rel: float = DatabaseManager.get_relationship_value(cm.id, other.id)
+				other.morale = maxf(0.0, other.morale - 2.0)
+				if rel > 50.0:
+					other.morale = maxf(0.0, other.morale - 3.0)
+				DatabaseManager.update_crew_member(other.id, {"morale": other.morale})
+
+			EventBus.legacy_created.emit(cm.crew_name, "voluntary")
+
+		"dismissal":
+			# Effect depends on average relationship
+			var d_type: String
+			var effect_type: String
+			var effect_value: float
+			var effect_ticks: int
+			var legacy_text: String
+
+			if avg_rel > 0.0:
+				# Negative: crew liked them, captain fired them
+				d_type = "dismissal_negative"
+				effect_type = "suspicion"
+				effect_value = 0.5  # 50% loyalty gain reduction
+				effect_ticks = 10
+				legacy_text = "%s — Dismissed (Day %d). The crew hasn't forgotten." % [cm.crew_name, GameManager.day_count]
+				# Morale hit and loyalty gain reduction
+				for other: CrewMember in roster:
+					if other.id == cm.id:
+						continue
+					other.morale = maxf(0.0, other.morale - 3.0)
+					DatabaseManager.update_crew_member(other.id, {"morale": other.morale})
+			elif avg_rel < 0.0:
+				# Positive: crew is relieved
+				d_type = "dismissal_positive"
+				effect_type = "relief"
+				effect_value = 3.0
+				effect_ticks = 5
+				legacy_text = "%s — Dismissed (Day %d). The ship breathes easier." % [cm.crew_name, GameManager.day_count]
+				for other: CrewMember in roster:
+					if other.id == cm.id:
+						continue
+					other.morale = minf(100.0, other.morale + 3.0)
+					DatabaseManager.update_crew_member(other.id, {"morale": other.morale})
+			else:
+				d_type = "dismissal_neutral"
+				effect_type = ""
+				effect_value = 0.0
+				effect_ticks = 0
+				legacy_text = "%s — Dismissed (Day %d)." % [cm.crew_name, GameManager.day_count]
+
+			DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+				"crew_name": cm.crew_name,
+				"crew_role": role_name,
+				"departure_type": d_type,
+				"legacy_text": legacy_text,
+				"effect_type": effect_type,
+				"effect_value": effect_value,
+				"effect_context": "all",
+				"effect_ticks_remaining": effect_ticks,
+				"day_departed": GameManager.day_count,
+			})
+			EventBus.legacy_created.emit(cm.crew_name, d_type)
+
+		"death":
+			# Permanent memorial: +2 combat morale resistance
+			var save: Dictionary = DatabaseManager.load_save()
+			var current_resist: float = save.get("combat_morale_resistance", 0.0)
+			DatabaseManager.update_save_state(GameManager.save_id, {"combat_morale_resistance": current_resist + 2.0})
+			GameManager.combat_morale_resistance += 2.0
+
+			DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+				"crew_name": cm.crew_name,
+				"crew_role": role_name,
+				"departure_type": "death",
+				"legacy_text": "%s — Killed in action (Day %d)" % [cm.crew_name, GameManager.day_count],
+				"effect_type": "combat_resistance",
+				"effect_value": 2.0,
+				"effect_context": "combat",
+				"effect_ticks_remaining": -1,
+				"day_departed": GameManager.day_count,
+			})
+			EventBus.legacy_created.emit(cm.crew_name, "death")
+
+
+# --- Death Trigger Checks ---
+
+static func check_combat_death(cm: CrewMember, difficulty: int,
+		roster: Array[CrewMember]) -> Array[String]:
+	## Called on critical failure in high-difficulty encounters.
+	## difficulty is scaled (base 40 + stars*15). Stars 4 = 100, 5 = 115.
+	## Returns death events if death occurs.
+	if difficulty < 100:  # Roughly difficulty 4+ stars
+		return []
+	if randf() >= 0.08:
+		return []
+	return process_crew_death(cm, "combat", roster)
+
+
+static func check_hull_breach_death(roster: Array[CrewMember]) -> Array[String]:
+	## Called on critical failure when hull < 20%.
+	if float(GameManager.hull_current) >= 0.20 * float(GameManager.hull_max):
+		return []
+	if randf() >= 0.15:
+		return []
+	# Random active crew member
+	if roster.is_empty():
+		return []
+	var victim: CrewMember = roster[randi() % roster.size()]
+	return process_crew_death(victim, "hull_breach", roster)
+
+
+static func check_disease_death(cm: CrewMember, roster: Array[CrewMember]) -> Array[String]:
+	## Checks if untreated disease kills a crew member.
+	## Condition: no medic, no hospital visit, disease ran full duration, stamina < 30.
+	if cm.stamina >= 30:
+		return []
+	if _has_medic_in_roster(roster):
+		return []
+	if randf() >= 0.05:
+		return []
+	return process_crew_death(cm, "disease", roster)

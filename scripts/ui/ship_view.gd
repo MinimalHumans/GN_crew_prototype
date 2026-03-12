@@ -110,6 +110,9 @@ func _build_ui() -> void:
 	# Ship History section (above crew grid)
 	_add_ship_history_section(content)
 
+	# Crew Legacy section (after ship history)
+	_add_crew_legacy_section(content)
+
 	# Section label
 	var grid_label: Label = Label.new()
 	grid_label.text = "CREW ROSTER"
@@ -767,6 +770,107 @@ func _add_ship_history_section(content: VBoxContainer) -> void:
 	content.add_child(HSeparator.new())
 
 
+func _add_crew_legacy_section(content: VBoxContainer) -> void:
+	## Adds the Crew Legacy section showing departed crew and their lasting effects.
+	var legacies: Array = DatabaseManager.get_crew_legacies(GameManager.save_id)
+	if legacies.is_empty():
+		return
+
+	var legacy_label: Label = Label.new()
+	legacy_label.text = "CREW LEGACY"
+	legacy_label.add_theme_font_size_override("font_size", 12)
+	legacy_label.add_theme_color_override("font_color", Color(COLOR_ACCENT))
+	content.add_child(legacy_label)
+
+	for legacy: Dictionary in legacies:
+		var entry: VBoxContainer = VBoxContainer.new()
+		entry.add_theme_constant_override("separation", 1)
+
+		# Name and departure type header
+		var dep_type: String = legacy.get("departure_type", "")
+		var crew_name: String = legacy.get("crew_name", "Unknown")
+		var crew_role: String = legacy.get("crew_role", "")
+		var day: int = legacy.get("day_departed", 0)
+
+		# Color by departure type
+		var dep_color: String
+		match dep_type:
+			"retirement":
+				dep_color = COLOR_GOOD
+			"death":
+				dep_color = COLOR_BAD
+			"voluntary":
+				dep_color = COLOR_WARN
+			_:
+				dep_color = COLOR_MUTED
+
+		var dep_display: String
+		match dep_type:
+			"retirement":
+				dep_display = "Retired"
+			"death":
+				dep_display = "Deceased"
+			"voluntary":
+				dep_display = "Departed"
+			"dismissal_positive":
+				dep_display = "Dismissed (amicably)"
+			"dismissal_negative":
+				dep_display = "Dismissed (bitter)"
+			_:
+				dep_display = "Departed"
+
+		var name_lbl: Label = Label.new()
+		name_lbl.text = "  %s — %s (%s, Day %d)" % [crew_name, crew_role, dep_display, day]
+		name_lbl.add_theme_font_size_override("font_size", 11)
+		name_lbl.add_theme_color_override("font_color", Color(dep_color))
+		entry.add_child(name_lbl)
+
+		# Legacy text
+		var legacy_text: String = legacy.get("legacy_text", "")
+		if not legacy_text.is_empty():
+			var text_lbl: Label = Label.new()
+			text_lbl.text = "    \"%s\"" % legacy_text
+			text_lbl.add_theme_font_size_override("font_size", 10)
+			text_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
+			text_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			entry.add_child(text_lbl)
+
+		# Effect display
+		var effect_type: String = legacy.get("effect_type", "")
+		var effect_value: float = legacy.get("effect_value", 0.0)
+		var effect_context: String = legacy.get("effect_context", "")
+		var ticks_left: int = legacy.get("effect_ticks_remaining", -1)
+
+		if not effect_type.is_empty() and effect_value != 0.0:
+			var effect_text: String = ""
+			match effect_type:
+				"role_efficiency":
+					effect_text = "%s role +%.0f%% efficiency" % [effect_context, effect_value * 100]
+				"morale_floor":
+					effect_text = "Morale floor +%.0f" % effect_value
+				"combat_resistance":
+					effect_text = "Combat morale resistance +%.0f%%" % (effect_value * 100)
+				"suspicion":
+					effect_text = "Crew suspicion +%.0f" % effect_value
+				"morale_temp":
+					effect_text = "Morale %+.0f" % effect_value
+				"relief":
+					effect_text = "Crew relief +%.0f morale" % effect_value
+
+			if not effect_text.is_empty():
+				var duration_text: String = " (permanent)" if ticks_left < 0 else " (%d ticks)" % ticks_left
+				var eff_lbl: Label = Label.new()
+				eff_lbl.text = "    Effect: %s%s" % [effect_text, duration_text]
+				eff_lbl.add_theme_font_size_override("font_size", 10)
+				var eff_color: String = COLOR_GOOD if effect_value > 0 else COLOR_BAD
+				eff_lbl.add_theme_color_override("font_color", Color(eff_color))
+				entry.add_child(eff_lbl)
+
+		content.add_child(entry)
+
+	content.add_child(HSeparator.new())
+
+
 func _clear_detail_panel() -> void:
 	if detail_panel == null:
 		return
@@ -811,7 +915,15 @@ func _on_dismiss_pressed(cm: CrewMember) -> void:
 
 func _confirm_dismiss(cm: CrewMember) -> void:
 	var dismiss_text: String = TextTemplates.get_dismiss_text(cm.crew_name)
-	GameManager.dismiss_crew(cm.id)
+	# Determine dismissal tone based on loyalty/morale
+	var dep_type: String = "dismissal_neutral"
+	if cm.loyalty >= 60 and cm.morale >= 40:
+		dep_type = "dismissal_positive"
+	elif cm.loyalty < 30 or cm.morale < 20:
+		dep_type = "dismissal_negative"
+	var legacy_events: Array[String] = GameManager.dismiss_crew_with_legacy(cm.id, dep_type)
 	log_message.emit("[color=%s]%s[/color]" % [COLOR_MUTED, dismiss_text])
+	for event_text: String in legacy_events:
+		log_message.emit("[color=%s]%s[/color]" % [COLOR_MUTED, event_text])
 	_clear_detail_panel()
 	_populate_crew_grid()

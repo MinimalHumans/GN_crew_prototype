@@ -86,6 +86,11 @@ var stowaway_found: bool = false
 var pending_promises: Array[Dictionary] = []  # e.g., {"type": "dock", "ticks_remaining": 3, "crew_id": 5}
 var last_food_planet_id: int = -1
 
+# Phase 5.4/5.5 state (persisted in save_state)
+var last_crew_gen_mission_tick: int = 0
+var morale_floor: float = 0.0
+var combat_morale_resistance: float = 0.0
+
 # Phase 3 one-time log flags (reset per session)
 var gorvian_fuel_logged: bool = false
 var claustrophobia_logged: Dictionary = {}  # {crew_id: true}
@@ -151,6 +156,9 @@ func _load_state_from_db() -> void:
 	day_count = save_data.day_count
 	pay_split = save_data.pay_split
 	last_food_planet_id = save_data.get("last_food_planet_id", -1)
+	last_crew_gen_mission_tick = save_data.get("last_crew_gen_mission_tick", 0)
+	morale_floor = save_data.get("morale_floor", 0.0)
+	combat_morale_resistance = save_data.get("combat_morale_resistance", 0.0)
 
 	# Load captain stats
 	var stats: Dictionary = DatabaseManager.get_captain_stats(save_id)
@@ -197,6 +205,9 @@ func save_game() -> void:
 		"current_ship_id": current_ship_id,
 		"day_count": day_count,
 		"pay_split": pay_split,
+		"last_crew_gen_mission_tick": last_crew_gen_mission_tick,
+		"morale_floor": morale_floor,
+		"combat_morale_resistance": combat_morale_resistance,
 	})
 
 	DatabaseManager.update_captain_stats(save_id, {
@@ -881,6 +892,7 @@ func _finalize_recruitment(candidate: CrewMember, starting_morale: float, result
 
 func dismiss_crew(crew_id: int) -> void:
 	## Dismisses a crew member (sets inactive, removes relationships and memories).
+	## For legacy-aware dismissals, use dismiss_crew_with_legacy() instead.
 	var crew_data: Dictionary = DatabaseManager.get_crew_member(crew_id)
 	var crew_name: String = crew_data.get("name", "Unknown")
 
@@ -891,6 +903,36 @@ func dismiss_crew(crew_id: int) -> void:
 	EventBus.crew_dismissed.emit(crew_id, crew_name)
 	EventBus.crew_changed.emit()
 	save_game()
+
+
+func dismiss_crew_with_legacy(crew_id: int, departure_type: String) -> Array[String]:
+	## Dismisses a crew member with legacy generation.
+	## departure_type: retirement, voluntary, dismissal_positive, dismissal_negative, dismissal_neutral, death
+	## Returns array of event text strings for the message log.
+	var crew_data: Dictionary = DatabaseManager.get_crew_member(crew_id)
+	var crew_name: String = crew_data.get("name", "Unknown")
+	var roster: Array[CrewMember] = get_crew_roster()
+	var cm: CrewMember = CrewMember.from_dict(crew_data)
+
+	# Generate legacy before deactivation (needs relationships)
+	CrewSimulation.generate_departure_legacy(cm, departure_type)
+	var legacy_events: Array[String] = []
+
+	# Deactivate crew member
+	DatabaseManager.deactivate_crew_member(crew_id)
+	DatabaseManager.delete_crew_relationships(crew_id)
+
+	# Emit appropriate signal based on departure type
+	if departure_type == "retirement":
+		EventBus.crew_retired.emit(crew_id, crew_name)
+	elif departure_type == "death":
+		EventBus.crew_died.emit(crew_id, crew_name, "")
+	else:
+		EventBus.crew_dismissed.emit(crew_id, crew_name)
+	EventBus.crew_changed.emit()
+	save_game()
+
+	return legacy_events
 
 
 func set_pay_split(new_split: float) -> void:

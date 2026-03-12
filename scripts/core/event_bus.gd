@@ -78,6 +78,17 @@ signal disease_spread(crew_id: int, disease_name: String)
 signal quarantine_started()
 signal permanent_impairment(crew_id: int, crew_name: String, stat: String, amount: int)
 
+# === CREW-GENERATED MISSIONS (Phase 5.4) ===
+signal crew_mission_triggered(crew_id: int, crew_name: String, template_type: String)
+signal crew_mission_completed(crew_id: int, template_type: String, success: bool)
+signal crew_mission_declined(crew_id: int)
+
+# === LEGACY SYSTEM (Phase 5.5) ===
+signal crew_retired(crew_id: int, crew_name: String)
+signal crew_died(crew_id: int, crew_name: String, cause: String)
+signal legacy_created(crew_name: String, departure_type: String)
+signal grief_resolved(crew_id: int, crew_name: String, outcome: String)
+
 # === UI ===
 signal message_logged(text: String, color: Color)
 signal scene_change_requested(scene_path: String)
