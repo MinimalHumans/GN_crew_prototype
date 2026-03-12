@@ -713,6 +713,10 @@ func _resolve_mission(mission: Dictionary) -> Dictionary:
 		var ship_mem_events: Array[String] = CrewSimulation.check_mission_ship_memory(outcome.tier, mission)
 		crew_events.append_array(ship_mem_events)
 
+		# Phase 5.2: Apply loyalty from mission result
+		var loyalty_events: Array[String] = CrewSimulation.apply_mission_loyalty(outcome.tier, roster)
+		crew_events.append_array(loyalty_events)
+
 	return {
 		"mission": mission,
 		"outcome_tier": outcome.tier,

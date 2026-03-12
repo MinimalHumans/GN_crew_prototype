@@ -269,6 +269,24 @@ func _create_tables() -> void:
 		)
 	""")
 
+	# Phase 5.1: Romance table
+	db.query("""
+		CREATE TABLE IF NOT EXISTS crew_romances (
+			id INTEGER PRIMARY KEY,
+			save_id INTEGER NOT NULL,
+			crew_a_id INTEGER NOT NULL,
+			crew_b_id INTEGER NOT NULL,
+			status TEXT DEFAULT 'ACTIVE',
+			formed_day INTEGER DEFAULT 1,
+			ended_day INTEGER DEFAULT 0,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (save_id) REFERENCES save_state(id),
+			FOREIGN KEY (crew_a_id) REFERENCES crew_members(id),
+			FOREIGN KEY (crew_b_id) REFERENCES crew_members(id)
+		)
+	""")
+
 
 # === SEED DATA ===
 
@@ -648,8 +666,9 @@ func delete_save(save_id: int) -> void:
 	for crew: Dictionary in crew_ids:
 		db.query_with_bindings("DELETE FROM crew_relationships WHERE crew_a_id = ? OR crew_b_id = ?", [crew.id, crew.id])
 		db.query_with_bindings("DELETE FROM crew_memories WHERE crew_id = ?", [crew.id])
-	# Delete ship memories
+	# Delete ship memories and romances
 	db.query_with_bindings("DELETE FROM ship_memories WHERE save_id = ?", [save_id])
+	db.query_with_bindings("DELETE FROM crew_romances WHERE save_id = ?", [save_id])
 	for table: String in ["crew_members", "cargo", "missions_active", "visited_planets", "ships", "captain_stats"]:
 		db.query_with_bindings("DELETE FROM %s WHERE save_id = ?" % table, [save_id])
 	db.query_with_bindings("DELETE FROM save_state WHERE id = ?", [save_id])
@@ -727,8 +746,21 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("crew_members", "conflicts_mediated", "INTEGER DEFAULT 0")
 	_add_column_if_missing("crew_members", "total_injuries_sustained", "INTEGER DEFAULT 0")
 	_add_column_if_missing("crew_members", "docked_ticks", "INTEGER DEFAULT 0")
+	# Phase 5.2: Loyalty system
+	_add_column_if_missing("crew_members", "value_preference", "TEXT DEFAULT ''")
+	_add_column_if_missing("crew_members", "value_evidence_count", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "loyalty_departure_stage", "INTEGER DEFAULT 0")
+	# Phase 5.3: Disease tracking
+	_add_column_if_missing("crew_members", "diseases", "TEXT DEFAULT '[]'")
+	_add_column_if_missing("crew_members", "permanent_impairments", "TEXT DEFAULT '[]'")
+	_add_column_if_missing("crew_members", "is_quarantined", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "quarantine_ticks", "INTEGER DEFAULT 0")
+	# Phase 5.3: Hospital service flag
+	_add_column_if_missing("planets", "has_hospital", "INTEGER DEFAULT 0")
 	# Seed Phase 3 planet flags
 	_seed_phase3_planet_flags()
+	# Seed Phase 5.3 hospital flags
+	_seed_phase5_hospital_flags()
 
 
 func _seed_phase3_planet_flags() -> void:
@@ -736,6 +768,12 @@ func _seed_phase3_planet_flags() -> void:
 	## Safe to call multiple times — just updates existing rows.
 	db.query_with_bindings("UPDATE planets SET cold_environment = 1 WHERE id = ?", [5])
 	db.query_with_bindings("UPDATE planets SET is_neutral = 1 WHERE id = ?", [12])
+
+
+func _seed_phase5_hospital_flags() -> void:
+	## Sets has_hospital on Haven (id=1), Korrath Prime (id=4), Lirien (id=7).
+	for pid: int in [1, 4, 7]:
+		db.query_with_bindings("UPDATE planets SET has_hospital = 1 WHERE id = ?", [pid])
 
 
 func _add_column_if_missing(table_name: String, column_name: String, column_def: String) -> void:
@@ -1018,3 +1056,52 @@ func get_ship_memories(save_id: int) -> Array:
 func get_ship_memory_count(save_id: int) -> int:
 	var rows: Array = db.select_rows("ship_memories", "save_id = %d" % save_id, ["id"])
 	return rows.size()
+
+
+# === CREW ROMANCES (Phase 5.1) ===
+
+func insert_crew_romance(save_id: int, crew_a_id: int, crew_b_id: int, day: int) -> void:
+	var a: int = mini(crew_a_id, crew_b_id)
+	var b: int = maxi(crew_a_id, crew_b_id)
+	db.query_with_bindings(
+		"INSERT INTO crew_romances (save_id, crew_a_id, crew_b_id, status, formed_day) VALUES (?, ?, ?, 'ACTIVE', ?)",
+		[save_id, a, b, day]
+	)
+
+
+func get_active_romances(save_id: int) -> Array:
+	return db.select_rows("crew_romances", "save_id = %d AND status = 'ACTIVE'" % save_id, ["*"])
+
+
+func get_romance_for_crew(crew_id: int) -> Dictionary:
+	## Returns the active romance involving this crew member, or empty dict.
+	var rows: Array = db.select_rows(
+		"crew_romances",
+		"(crew_a_id = %d OR crew_b_id = %d) AND status = 'ACTIVE'" % [crew_id, crew_id],
+		["*"]
+	)
+	if rows.is_empty():
+		return {}
+	return rows[0]
+
+
+func end_romance(romance_id: int, day: int) -> void:
+	db.query_with_bindings(
+		"UPDATE crew_romances SET status = 'ENDED', ended_day = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		[day, romance_id]
+	)
+
+
+func is_in_romance(crew_id: int) -> bool:
+	var rom: Dictionary = get_romance_for_crew(crew_id)
+	return not rom.is_empty()
+
+
+func get_partner_id(crew_id: int) -> int:
+	## Returns the partner's crew_id if in an active romance, or -1.
+	var rom: Dictionary = get_romance_for_crew(crew_id)
+	if rom.is_empty():
+		return -1
+	if rom.crew_a_id == crew_id:
+		return rom.crew_b_id
+	return rom.crew_a_id

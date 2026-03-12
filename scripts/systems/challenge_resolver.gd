@@ -171,6 +171,10 @@ static func find_crew_for_role(roster: Array[CrewMember], role_name: String,
 	var best_gen: CrewMember = null
 	var best_gen_stat: float = -1.0
 	var best_gen_type: String = "generalist"
+	# Phase 5.1: Check if excluded crew has a romance partner (for enhanced pinch-hitting)
+	var partner_of_excluded: int = -1
+	if exclude_crew != null:
+		partner_of_excluded = DatabaseManager.get_partner_id(exclude_crew.id)
 	for cm: CrewMember in roster:
 		if exclude_crew != null and cm.id == exclude_crew.id:
 			continue
@@ -184,6 +188,9 @@ static func find_crew_for_role(roster: Array[CrewMember], role_name: String,
 		elif cm.role != target_role:
 			# Non-matching specialist can pinch-hit
 			var mult: float = cm.get_pinch_hit_effectiveness(role_name)
+			# Phase 5.1: Romance partner gets enhanced pinch-hitting (50% effectiveness)
+			if partner_of_excluded == cm.id:
+				mult = maxf(mult, 0.50)
 			var eff: float = cm.get_effective_stat(stat_name) * mult
 			if eff > best_gen_stat:
 				best_gen_stat = eff
@@ -290,6 +297,20 @@ static func resolve_crew_challenge(roster: Array[CrewMember], primary_role: Stri
 		if smem_type != "COHESION" and smem_context == _get_encounter_context():
 			effective += int(smem.get("modifier_value", 0.0))
 
+	# Phase 5.1: Romance synergy bonus (+5 when both partners in encounter)
+	if primary_crew != null and not secondary.is_empty():
+		var sec_crew: CrewMember = secondary.get("crew")
+		if sec_crew != null:
+			var partner_id: int = DatabaseManager.get_partner_id(primary_crew.id)
+			if partner_id == sec_crew.id:
+				effective += 5
+
+	# Phase 5.2: Loyalty crisis bonus
+	if primary_crew != null:
+		var crisis_bonus: float = CrewSimulation.get_loyalty_crisis_bonus(primary_crew)
+		if crisis_bonus > 0.0:
+			effective = int(float(effective) * (1.0 + crisis_bonus))
+
 	var roll: int = effective + randi_range(0, maxi(effective, 1))
 
 	var tier: String
@@ -332,6 +353,13 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 	var encounter_type: String = result.get("encounter_type", "encounter")
 	var injured_count: int = 0
 
+	# Get medic stat for structured injury system
+	var medic_stat: float = 50.0
+	for cm: CrewMember in roster:
+		if cm.role == CrewMember.Role.MEDIC:
+			medic_stat = cm.get_effective_stat("social")
+			break
+
 	match result.tier:
 		"critical_success":
 			if primary.get("crew") != null:
@@ -356,52 +384,69 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 				_apply_purpose(primary.crew)
 				_apply_fatigue_delta(primary.crew, 8.0)
 				if randf() < 0.20:
-					var inj: String = _inflict_injury(primary.crew, "minor", has_medic)
-					if inj != "":
-						events.append(inj)
+					var inj_result: Dictionary = CrewSimulation.inflict_structured_injury(
+						primary.crew, "MINOR", has_medic, medic_stat)
+					if not inj_result.is_empty():
+						events.append(inj_result.event_text)
 						injured_count += 1
 						CrewSimulation.create_injury_memory(primary.crew, "minor")
+						# Phase 5.1: Partner injury reaction
+						var partner_events: Array[String] = CrewSimulation.trigger_partner_injury_reaction(primary.crew, roster)
+						events.append_array(partner_events)
 
 		"failure":
 			if primary.get("crew") != null:
 				_apply_fatigue_delta(primary.crew, 10.0)
-				_apply_morale_delta(primary.crew, -3.0)
+				# Phase 5.2: Loyalty morale anchor
+				var morale_penalty: float = CrewSimulation.get_loyalty_morale_anchor(primary.crew, -3.0)
+				_apply_morale_delta(primary.crew, morale_penalty)
 				events.append("[color=#E67E22]%s is frustrated after the failed attempt.[/color]" % primary.crew.crew_name)
 				if randf() < 0.40:
-					var inj: String = _inflict_injury(primary.crew, "minor", has_medic)
-					if inj != "":
-						events.append(inj)
+					var inj_result: Dictionary = CrewSimulation.inflict_structured_injury(
+						primary.crew, "MINOR", has_medic, medic_stat)
+					if not inj_result.is_empty():
+						events.append(inj_result.event_text)
 						injured_count += 1
 						CrewSimulation.create_injury_memory(primary.crew, "minor")
+						var partner_events: Array[String] = CrewSimulation.trigger_partner_injury_reaction(primary.crew, roster)
+						events.append_array(partner_events)
 			if secondary.get("crew") != null:
 				_apply_fatigue_delta(secondary.crew, 5.0)
 
 		"critical_failure":
 			if primary.get("crew") != null:
 				_apply_fatigue_delta(primary.crew, 15.0)
-				_apply_morale_delta(primary.crew, -8.0)
+				var morale_penalty: float = CrewSimulation.get_loyalty_morale_anchor(primary.crew, -8.0)
+				_apply_morale_delta(primary.crew, morale_penalty)
 				# Phase 4.2: Memory on critical failure
 				CrewSimulation.create_challenge_memory(primary.crew, "critical_failure",
 					primary.get("display_name", ""), encounter_type)
 				if randf() < 0.70:
-					var inj: String = _inflict_injury(primary.crew, "moderate", has_medic)
-					if inj != "":
-						events.append(inj)
+					var inj_result: Dictionary = CrewSimulation.inflict_structured_injury(
+						primary.crew, "MODERATE", has_medic, medic_stat)
+					if not inj_result.is_empty():
+						events.append(inj_result.event_text)
 						injured_count += 1
 						CrewSimulation.create_injury_memory(primary.crew, "moderate")
+						var partner_events: Array[String] = CrewSimulation.trigger_partner_injury_reaction(primary.crew, roster)
+						events.append_array(partner_events)
 						# Witness memory for other crew
 						for cm: CrewMember in roster:
 							if cm.id != primary.crew.id:
 								CrewSimulation.create_witness_injury_memory(cm, primary.crew.crew_name)
 				if randf() < 0.10:
-					var inj: String = _inflict_injury(primary.crew, "severe", has_medic)
-					if inj != "":
-						events.append(inj)
+					var inj_result: Dictionary = CrewSimulation.inflict_structured_injury(
+						primary.crew, "SEVERE", has_medic, medic_stat)
+					if not inj_result.is_empty():
+						events.append(inj_result.event_text)
 						injured_count += 1
 						CrewSimulation.create_injury_memory(primary.crew, "severe")
+						var partner_events: Array[String] = CrewSimulation.trigger_partner_injury_reaction(primary.crew, roster)
+						events.append_array(partner_events)
 			if secondary.get("crew") != null:
 				_apply_fatigue_delta(secondary.crew, 10.0)
-				_apply_morale_delta(secondary.crew, -5.0)
+				var sec_penalty: float = CrewSimulation.get_loyalty_morale_anchor(secondary.crew, -5.0)
+				_apply_morale_delta(secondary.crew, sec_penalty)
 				events.append("[color=#E67E22]%s took a heavy toll from the encounter.[/color]" % secondary.crew.crew_name)
 
 	# Phase 4.1: Apply pinch-hit experience

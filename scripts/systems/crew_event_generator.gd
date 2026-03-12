@@ -189,6 +189,21 @@ static func _check_decision_events(roster: Array[CrewMember]) -> Dictionary:
 	if not GameManager.stowaway_found and randf() < 0.02:
 		return _build_stowaway()
 
+	# 7. Phase 5.2: Loyalty ultimatum — departure stage 3
+	for cm: CrewMember in roster:
+		if cm.loyalty_departure_stage >= 3 and cm.loyalty > 0.0:
+			return _build_loyalty_ultimatum(cm)
+
+	# 8. Phase 5.3: Quarantine decision — 2+ same-species infected
+	var species_sick_count: Dictionary = {}
+	for cm: CrewMember in roster:
+		if cm.has_diseases():
+			var species_key: String = cm.get_species_name()
+			species_sick_count[species_key] = species_sick_count.get(species_key, 0) + 1
+	for species_key: String in species_sick_count:
+		if species_sick_count[species_key] >= 2:
+			return _build_quarantine_decision(roster, species_key)
+
 	return {}
 
 
@@ -366,6 +381,69 @@ static func _build_stowaway() -> Dictionary:
 	}
 
 
+static func _build_loyalty_ultimatum(cm: CrewMember) -> Dictionary:
+	var value_hint: String = ""
+	if cm.value_evidence_count >= 3:
+		value_hint = " They value %s." % CrewMember.VALUE_PREFERENCE_DISPLAY.get(cm.value_preference, "fairness")
+	return {
+		"id": "loyalty_ultimatum",
+		"title": "Ultimatum",
+		"description": "%s corners you in the corridor. 'Captain, I've had enough. Something needs to change, or I'm leaving at the next port.'%s" % [cm.crew_name, value_hint],
+		"options": [
+			{
+				"label": "Improve pay split",
+				"hint": "Adjust to 50/50 or better. Shows you're willing to compromise.",
+				"effects": {"type": "ultimatum_pay", "crew_id": cm.id},
+			},
+			{
+				"label": "Promise safer routes",
+				"hint": "'I'll keep us out of trouble.' They'll hold you to it.",
+				"effects": {"type": "ultimatum_safety", "crew_id": cm.id},
+			},
+			{
+				"label": "Appeal to loyalty",
+				"hint": "'We've been through too much together to give up now.'",
+				"effects": {"type": "ultimatum_appeal", "crew_id": cm.id},
+			},
+			{
+				"label": "Let them go",
+				"hint": "'If that's how you feel, I won't stop you.'",
+				"effects": {"type": "ultimatum_accept", "crew_id": cm.id},
+			},
+		],
+	}
+
+
+static func _build_quarantine_decision(roster: Array[CrewMember], species_key: String) -> Dictionary:
+	var sick_names: Array[String] = []
+	for cm: CrewMember in roster:
+		if cm.has_diseases() and cm.get_species_name() == species_key:
+			sick_names.append(cm.crew_name)
+	var names_str: String = ", ".join(sick_names)
+	return {
+		"id": "quarantine_decision",
+		"title": "Disease Outbreak",
+		"description": "Multiple %s crew are showing symptoms — %s. The disease could spread to the rest of the crew." % [species_key, names_str],
+		"options": [
+			{
+				"label": "Quarantine the sick",
+				"hint": "Isolates infected crew. Reduces spread but hurts their morale.",
+				"effects": {"type": "quarantine_enforce", "species": species_key},
+			},
+			{
+				"label": "Keep them on duty",
+				"hint": "'We need every hand.' Higher spread risk but no morale penalty.",
+				"effects": {"type": "quarantine_refuse", "species": species_key},
+			},
+			{
+				"label": "Dock at nearest hospital",
+				"hint": "Promise to seek medical help. Costs time and credits.",
+				"effects": {"type": "quarantine_hospital", "species": species_key},
+			},
+		],
+	}
+
+
 # === DECISION RESOLUTION ===
 
 static func resolve_decision(event_id: String, choice: int, event_data: Dictionary) -> String:
@@ -373,6 +451,19 @@ static func resolve_decision(event_id: String, choice: int, event_data: Dictiona
 	var effects: Dictionary = event_data.options[choice].effects
 	GameManager.ticks_since_last_decision = 0
 
+	var result_text: String = _resolve_decision_effects(effects)
+
+	# Phase 5.2: Apply loyalty effects for all decision types
+	var loyalty_roster: Array[CrewMember] = GameManager.get_crew_roster()
+	var loyalty_events: Array[String] = CrewSimulation.apply_decision_loyalty(loyalty_roster, effects.type)
+	for le: String in loyalty_events:
+		EventBus.message_logged.emit(le, Color.WHITE)
+
+	return result_text
+
+
+static func _resolve_decision_effects(effects: Dictionary) -> String:
+	## Internal: resolves decision effects. Returns result text.
 	match effects.type:
 		# --- Crew Conflict ---
 		"crew_conflict_side_a":
@@ -482,7 +573,6 @@ static func resolve_decision(event_id: String, choice: int, event_data: Dictiona
 		# --- Stowaway ---
 		"stowaway_accept":
 			GameManager.stowaway_found = true
-			# Generate and recruit a stowaway crew member
 			var stowaway_id: int = _create_stowaway(effects.species, effects.role)
 			if stowaway_id >= 0:
 				return "You take the stowaway aboard. They look at you with desperate gratitude."
@@ -497,6 +587,58 @@ static func resolve_decision(event_id: String, choice: int, event_data: Dictiona
 			EventBus.food_changed.emit(GameManager.food_supply)
 			_adjust_all_morale(3.0)
 			return "You give them food and wish them luck. The crew watches them go with quiet respect."
+
+		# --- Phase 5.2: Loyalty Ultimatum ---
+		"ultimatum_pay":
+			GameManager.set_pay_split(minf(0.5, GameManager.pay_split))
+			_adjust_loyalty(effects.crew_id, 10.0)
+			_adjust_morale(effects.crew_id, 8.0)
+			return "You adjust the pay split. They nod slowly. 'That's a start, Captain.'"
+		"ultimatum_safety":
+			GameManager.pending_promises.append({
+				"type": "safe_routes",
+				"ticks_remaining": 10,
+				"crew_id": effects.crew_id,
+			})
+			_adjust_loyalty(effects.crew_id, 5.0)
+			return "'I'll keep us out of the worst of it.' They look skeptical, but willing to wait."
+		"ultimatum_appeal":
+			# Works better with high captain Social
+			if GameManager.social > 55:
+				_adjust_loyalty(effects.crew_id, 8.0)
+				_adjust_morale(effects.crew_id, 5.0)
+				return "Your words land. 'You're right, Captain. We've been through worse.' They stay."
+			else:
+				_adjust_loyalty(effects.crew_id, 2.0)
+				return "They don't look convinced, but they're not leaving yet. Barely."
+		"ultimatum_accept":
+			# Let them go at next port
+			var crew_data: Dictionary = DatabaseManager.get_crew_member(effects.crew_id)
+			var crew_name: String = crew_data.get("name", "Unknown")
+			DatabaseManager.update_crew_member(effects.crew_id, {"loyalty": 0.0, "loyalty_departure_stage": 3})
+			return "'If that's how you feel.' %s will leave at the next port." % crew_name
+
+		# --- Phase 5.3: Quarantine Decision ---
+		"quarantine_enforce":
+			var roster: Array[CrewMember] = GameManager.get_crew_roster()
+			for cm: CrewMember in roster:
+				if cm.has_diseases() and cm.get_species_name() == effects.species:
+					cm.is_quarantined = true
+					cm.quarantine_ticks = 10
+					DatabaseManager.update_crew_member(cm.id, {"is_quarantined": 1, "quarantine_ticks": 10})
+					_adjust_morale(cm.id, -8.0)
+			EventBus.quarantine_started.emit()
+			return "Quarantine enforced. The sick crew are isolated. They understand, but it's hard."
+		"quarantine_refuse":
+			return "You keep everyone on duty. The crew trades worried glances, but nobody argues."
+		"quarantine_hospital":
+			GameManager.pending_promises.append({
+				"type": "dock_hospital",
+				"ticks_remaining": 5,
+				"crew_id": -1,
+			})
+			_adjust_all_morale(3.0)
+			return "'We'll find a hospital.' The crew looks relieved. You need to dock at a hospital planet soon."
 
 	return "Decision resolved."
 

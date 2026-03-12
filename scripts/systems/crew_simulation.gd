@@ -196,10 +196,16 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			cm.morale = maxf(target, cm.morale - drift_speed)
 		cm.morale = clampf(cm.morale, 0.0, 100.0)
 
-		# --- Injury recovery ---
-		var recovered: Array[String] = cm.tick_injuries()
-		for recovery_text: String in recovered:
-			events.append("[color=#27AE60]%s[/color]" % recovery_text)
+		# --- Injury recovery (Phase 5.3: structured with permanent impairment check) ---
+		var recovery_events: Array[String] = check_permanent_impairment(cm)
+		events.append_array(recovery_events)
+
+		# --- Disease ticks (Phase 5.3) ---
+		var cured: Array[String] = cm.tick_diseases()
+		for cure_text: String in cured:
+			events.append("[color=#27AE60]%s[/color]" % cure_text)
+		if not cured.is_empty():
+			DatabaseManager.update_crew_member(cm.id, {"diseases": JSON.stringify(cm.diseases)})
 
 		# --- Phase 4.2: Hull near-death memory trigger ---
 		if had_encounter and encounter_was_combat:
@@ -228,12 +234,37 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			"total_injuries_sustained": cm.total_injuries_sustained,
 			"docked_ticks": cm.docked_ticks,
 			"traits": JSON.stringify(cm.traits),
+			"diseases": JSON.stringify(cm.diseases),
+			"permanent_impairments": JSON.stringify(cm.permanent_impairments),
+			"loyalty": cm.loyalty,
+			"loyalty_departure_stage": cm.loyalty_departure_stage,
+			"value_evidence_count": cm.value_evidence_count,
+			"is_quarantined": 1 if cm.is_quarantined else 0,
+			"quarantine_ticks": cm.quarantine_ticks,
 		})
 
 	# --- Phase 4.4: Ship memory triggers ---
 	if had_encounter and encounter_was_combat:
 		var ship_events: Array[String] = _check_ship_memory_triggers(roster)
 		events.append_array(ship_events)
+
+	# --- Phase 5.1: Romance processing ---
+	var romance_events: Array[String] = _check_romance_eligibility(roster)
+	events.append_array(romance_events)
+	var romance_effect_events: Array[String] = _process_romance_effects(roster)
+	events.append_array(romance_effect_events)
+
+	# --- Phase 5.2: Loyalty processing ---
+	var loyalty_events: Array[String] = _process_loyalty_tick(roster)
+	events.append_array(loyalty_events)
+
+	# --- Phase 5.3: Disease triggers ---
+	var disease_events: Array[String] = _check_disease_triggers(roster, had_encounter)
+	events.append_array(disease_events)
+
+	# --- Phase 5.3: Quarantine ticks ---
+	var quarantine_events: Array[String] = _process_disease_ticks(roster)
+	events.append_array(quarantine_events)
 
 	# --- Relationship shifts ---
 	var rel_events: Array[String] = _process_relationships_tick(roster, had_encounter, encounter_was_combat, roles_tested)
@@ -307,11 +338,62 @@ static func tick_planet_arrival() -> Array[String]:
 				})
 				events.append("[color=#4CAF50]%s is moved by the visit to %s. It feels like coming home.[/color]" % [cm.crew_name, planet.get("name", "unknown")])
 
+		# Phase 5.1: Shared rest bonus for couples
+		var partner_id: int = DatabaseManager.get_partner_id(cm.id)
+		if partner_id >= 0:
+			# Partner also docked — 25% extra fatigue recovery
+			cm.fatigue = maxf(0.0, cm.fatigue - 2.0)
+
+		# Phase 5.3: Hospital visit check
+		var has_hospital: bool = planet.get("has_hospital", 0) == 1
+		if has_hospital:
+			# Auto-heal minor injuries for free at hospital planets
+			var healed_minor: Array = []
+			var remaining_inj: Array = []
+			for inj: Dictionary in cm.injuries:
+				if inj.get("severity", inj.get("description", "")).find("MINOR") != -1 or \
+				   inj.get("ticks_remaining", 99) <= 5:
+					healed_minor.append(inj)
+				else:
+					remaining_inj.append(inj)
+			if not healed_minor.is_empty():
+				cm.injuries = remaining_inj
+				events.append("[color=#27AE60]%s received treatment at the hospital. Minor injuries patched up.[/color]" % cm.crew_name)
+
+		# Phase 5.3: Cold environment disease check on arrival
+		if planet.get("cold_environment", 0) == 1:
+			if cm.species == CrewMember.Species.GORVIAN and not _has_disease(cm, CrewEventTemplates.DISEASE_THERMAL_SHOCK):
+				if randf() < 0.15:
+					var disease_text: String = _inflict_disease(cm, CrewEventTemplates.DISEASE_THERMAL_SHOCK,
+						"stamina", 7, randi_range(15, 20), true, false, _has_medic_in_roster(roster))
+					events.append(disease_text)
+
+		# Phase 5.2: Loyalty departure — crew with loyalty 0 leaves at port
+		if cm.loyalty <= 0.0 and cm.loyalty_departure_stage >= 3:
+			events.append("[color=#C0392B][b]%s has left the crew.[/b] %s[/color]" % [cm.crew_name,
+				CrewEventTemplates._pick(CrewEventTemplates.LOYALTY_DEPARTURE).replace("{name}", cm.crew_name)])
+			GameManager.dismiss_crew(cm.id)
+			EventBus.crew_departed.emit(cm.id, cm.crew_name)
+			# Apply morale hit to remaining crew
+			for other: CrewMember in roster:
+				if other.id == cm.id:
+					continue
+				var rel: float = DatabaseManager.get_relationship_value(cm.id, other.id)
+				if rel > 30.0:
+					other.morale = maxf(0.0, other.morale - 5.0)
+				elif rel > 0.0:
+					other.morale = maxf(0.0, other.morale - 2.0)
+			continue  # Skip persisting this crew — they're gone
+
 		# Persist
 		DatabaseManager.update_crew_member(cm.id, {
 			"fatigue": cm.fatigue,
 			"comfort_food_ticks": cm.comfort_food_ticks,
 			"docked_ticks": cm.docked_ticks,
+			"injuries": JSON.stringify(cm.injuries),
+			"diseases": JSON.stringify(cm.diseases),
+			"morale": cm.morale,
+			"loyalty": cm.loyalty,
 		})
 
 		# Log notable fatigue recovery
@@ -938,6 +1020,668 @@ static func _cap_ship_memories() -> void:
 		if oldest_id > 0:
 			DatabaseManager.db.query_with_bindings("DELETE FROM ship_memories WHERE id = ?", [oldest_id])
 		all_mems = DatabaseManager.get_ship_memories(GameManager.save_id)
+
+
+# === PHASE 5.1: ROMANCE SYSTEM ===
+
+static func _check_romance_eligibility(roster: Array[CrewMember]) -> Array[String]:
+	## Checks all eligible pairs for romance formation.
+	var events: Array[String] = []
+	if roster.size() < 2:
+		return events
+
+	for i: int in range(roster.size()):
+		for j: int in range(i + 1, roster.size()):
+			var cm_a: CrewMember = roster[i]
+			var cm_b: CrewMember = roster[j]
+
+			# Skip if either is already in a romance
+			if DatabaseManager.is_in_romance(cm_a.id) or DatabaseManager.is_in_romance(cm_b.id):
+				continue
+
+			var rel_val: float = DatabaseManager.get_relationship_value(cm_a.id, cm_b.id)
+			if rel_val < 70.0:
+				continue
+
+			# Check personality compatibility
+			if not cm_a.is_romance_compatible(cm_b):
+				continue
+
+			# Roll probability
+			var chance: float
+			if rel_val >= 90.0:
+				chance = 0.10
+			elif rel_val >= 80.0:
+				chance = 0.06
+			else:
+				chance = 0.03
+
+			if randf() < chance:
+				# Romance forms!
+				DatabaseManager.insert_crew_romance(GameManager.save_id, cm_a.id, cm_b.id, GameManager.day_count)
+				var text: String = CrewEventTemplates.get_romance_formation_text(cm_a.crew_name, cm_b.crew_name)
+				events.append("[color=#E6D159][b]Romance:[/b] %s[/color]" % text)
+				EventBus.romance_formed.emit(cm_a.id, cm_b.id)
+
+	return events
+
+
+static func _process_romance_effects(roster: Array[CrewMember]) -> Array[String]:
+	## Processes ongoing romance effects: linked morale, partner injury concern.
+	var events: Array[String] = []
+	var romances: Array = DatabaseManager.get_active_romances(GameManager.save_id)
+
+	for rom: Dictionary in romances:
+		var cm_a: CrewMember = _find_in_roster(roster, rom.crew_a_id)
+		var cm_b: CrewMember = _find_in_roster(roster, rom.crew_b_id)
+		if cm_a == null or cm_b == null:
+			continue
+
+		# Linked morale: pull toward each other, capped at 3 points per tick
+		var morale_diff: float = cm_a.morale - cm_b.morale
+		var pull: float = morale_diff * 0.30
+		pull = clampf(pull, -3.0, 3.0)
+		cm_b.morale = clampf(cm_b.morale + pull, 0.0, 100.0)
+		cm_a.morale = clampf(cm_a.morale - pull, 0.0, 100.0)
+
+		# Relationship buffer: +10 drift resistance (harder for romance to decay)
+		var rel_val: float = DatabaseManager.get_relationship_value(cm_a.id, cm_b.id)
+		if rel_val < 70.0:
+			DatabaseManager.update_relationship(cm_a.id, cm_b.id, rel_val + 0.5)
+
+		# Partner injury concern
+		if cm_a.has_injuries() and not cm_b.has_injuries():
+			# Check for severe injury
+			var severe: bool = false
+			for inj: Dictionary in cm_a.injuries:
+				if inj.get("ticks_remaining", 0) >= 25:
+					severe = true
+					break
+			if severe:
+				cm_b.morale = maxf(0.0, cm_b.morale - 0.5)  # Lingering -3 spread over ticks
+
+		if cm_b.has_injuries() and not cm_a.has_injuries():
+			var severe: bool = false
+			for inj: Dictionary in cm_b.injuries:
+				if inj.get("ticks_remaining", 0) >= 25:
+					severe = true
+					break
+			if severe:
+				cm_a.morale = maxf(0.0, cm_a.morale - 0.5)
+
+		# Shared rest bonus (at planet — docked)
+		if cm_a.docked_ticks > 0 and cm_b.docked_ticks > 0:
+			cm_a.fatigue = maxf(0.0, cm_a.fatigue - 1.0)  # 25% bonus rest
+			cm_b.fatigue = maxf(0.0, cm_b.fatigue - 1.0)
+
+		# Check for breakup conditions
+		if rel_val < 40.0 and rel_val >= 30.0:
+			# Warning
+			events.append("[color=#E67E22]%s and %s have been arguing more than usual. The crew is trying to stay out of it.[/color]" % [cm_a.crew_name, cm_b.crew_name])
+			EventBus.romance_warning.emit(cm_a.id, cm_b.id)
+		elif rel_val < 30.0:
+			# Breakup
+			var breakup_events: Array[String] = _process_breakup(cm_a, cm_b, rom, roster)
+			events.append_array(breakup_events)
+
+		# Periodic romance event (every 10-20 ticks)
+		var romance_age: int = GameManager.day_count - rom.get("formed_day", GameManager.day_count)
+		if romance_age > 0 and romance_age % randi_range(10, 20) == 0:
+			var avg_morale: float = (cm_a.morale + cm_b.morale) / 2.0
+			var rom_text: String = CrewEventTemplates.get_romance_event_text(cm_a.crew_name, cm_b.crew_name, avg_morale)
+			events.append("[color=#718096]%s[/color]" % rom_text)
+
+	return events
+
+
+static func _process_breakup(cm_a: CrewMember, cm_b: CrewMember, rom: Dictionary,
+		roster: Array[CrewMember]) -> Array[String]:
+	## Handles a romance breakup.
+	var events: Array[String] = []
+	var rom_duration: int = GameManager.day_count - rom.get("formed_day", GameManager.day_count)
+	var morale_hit: float = minf(25.0, 10.0 + float(rom_duration) / 10.0)
+
+	# End the romance
+	DatabaseManager.end_romance(rom.get("id", -1), GameManager.day_count)
+
+	# Morale hits
+	cm_a.morale = maxf(0.0, cm_a.morale - morale_hit)
+	cm_b.morale = maxf(0.0, cm_b.morale - morale_hit)
+
+	# Crew takes sides
+	for cm: CrewMember in roster:
+		if cm.id == cm_a.id or cm.id == cm_b.id:
+			continue
+		var rel_to_a: float = DatabaseManager.get_relationship_value(cm.id, cm_a.id)
+		var rel_to_b: float = DatabaseManager.get_relationship_value(cm.id, cm_b.id)
+		if rel_to_a > rel_to_b:
+			DatabaseManager.update_relationship(cm.id, cm_a.id, rel_to_a + 5.0)
+			DatabaseManager.update_relationship(cm.id, cm_b.id, rel_to_b - 5.0)
+		elif rel_to_b > rel_to_a:
+			DatabaseManager.update_relationship(cm.id, cm_b.id, rel_to_b + 5.0)
+			DatabaseManager.update_relationship(cm.id, cm_a.id, rel_to_a - 5.0)
+
+	events.append("[color=#C0392B][b]Breakup:[/b] %s[/color]" % CrewEventTemplates._pick(
+		CrewEventTemplates.ROMANCE_BREAKUP).replace("{a}", cm_a.crew_name).replace("{b}", cm_b.crew_name))
+	EventBus.romance_ended.emit(cm_a.id, cm_b.id, "breakup")
+
+	return events
+
+
+static func trigger_partner_injury_reaction(injured_cm: CrewMember, roster: Array[CrewMember]) -> Array[String]:
+	## Called when a partner is injured. Returns event text.
+	var events: Array[String] = []
+	var partner_id: int = DatabaseManager.get_partner_id(injured_cm.id)
+	if partner_id < 0:
+		return events
+
+	var partner: CrewMember = _find_in_roster(roster, partner_id)
+	if partner == null:
+		return events
+
+	# Immediate morale hit
+	partner.morale = maxf(0.0, partner.morale - 8.0)
+	DatabaseManager.update_crew_member(partner.id, {"morale": partner.morale})
+
+	var text: String = CrewEventTemplates._pick(CrewEventTemplates.ROMANCE_INJURY_CONCERN).replace(
+		"{a}", partner.crew_name).replace("{b}", injured_cm.crew_name)
+	events.append("[color=#E67E22]%s[/color]" % text)
+
+	return events
+
+
+static func trigger_grief_state(surviving_partner_id: int) -> void:
+	## Stub for crew death — to be implemented when death system is added.
+	## Should: set morale to 10, performance -30% all stats for 30 ticks.
+	## After grief resolves: 70% "Resolved" (+5 all) if loyalty > 60, else 70% "Broken" (-5 all).
+	pass
+
+
+static func _find_in_roster(roster: Array[CrewMember], crew_id: int) -> CrewMember:
+	for cm: CrewMember in roster:
+		if cm.id == crew_id:
+			return cm
+	return null
+
+
+# === PHASE 5.2: LOYALTY SYSTEM ===
+
+static func _process_loyalty_tick(roster: Array[CrewMember]) -> Array[String]:
+	## Processes loyalty changes per tick: pay split drift, departure arc.
+	var events: Array[String] = []
+	var tick_counter: int = GameManager.day_count
+
+	# Pay split loyalty drift (every 20 ticks)
+	if tick_counter % 20 == 0:
+		for cm: CrewMember in roster:
+			var old_loyalty: float = cm.loyalty
+			if GameManager.pay_split <= 0.4:
+				cm.loyalty = minf(100.0, cm.loyalty + 1.0)
+			elif GameManager.pay_split >= 0.6:
+				cm.loyalty = maxf(0.0, cm.loyalty - 0.5)
+			elif GameManager.pay_split == 0.5:
+				cm.loyalty = minf(100.0, cm.loyalty + 0.5)
+
+			if cm.loyalty != old_loyalty:
+				EventBus.loyalty_changed.emit(cm.id, cm.loyalty, old_loyalty)
+
+	# Departure arc processing
+	for cm: CrewMember in roster:
+		var old_stage: int = cm.loyalty_departure_stage
+		var new_stage: int = 0
+
+		if cm.loyalty < 10.0:
+			new_stage = 3
+		elif cm.loyalty < 20.0:
+			new_stage = 2
+		elif cm.loyalty < 25.0:
+			new_stage = 1
+
+		if new_stage != old_stage:
+			cm.loyalty_departure_stage = new_stage
+			DatabaseManager.update_crew_member(cm.id, {"loyalty_departure_stage": new_stage})
+
+			if new_stage == 1 and old_stage == 0:
+				events.append("[color=#E67E22]%s[/color]" % CrewEventTemplates._pick(
+					CrewEventTemplates.LOYALTY_WITHDRAWAL).replace("{name}", cm.crew_name))
+				EventBus.loyalty_stage_changed.emit(cm.id, cm.crew_name, "withdrawal")
+			elif new_stage == 2 and old_stage < 2:
+				events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates._pick(
+					CrewEventTemplates.LOYALTY_VOCAL).replace("{name}", cm.crew_name))
+				EventBus.loyalty_stage_changed.emit(cm.id, cm.crew_name, "vocal")
+
+		# Stage 2: negative morale influence
+		if cm.loyalty_departure_stage >= 2:
+			# Their negativity affects crew with strong relationships
+			for other: CrewMember in roster:
+				if other.id == cm.id:
+					continue
+				var rel: float = DatabaseManager.get_relationship_value(cm.id, other.id)
+				if rel > 20.0:
+					other.morale = maxf(0.0, other.morale - 0.3)
+
+	return events
+
+
+static func apply_mission_loyalty(outcome_tier: String, roster: Array[CrewMember]) -> Array[String]:
+	## Called after mission resolution. Awards loyalty based on outcome.
+	var events: Array[String] = []
+	var delta: float = 0.0
+
+	match outcome_tier:
+		"critical_success":
+			delta = 2.0
+		"success":
+			delta = 1.0
+		"marginal_success":
+			delta = 0.0
+		"failure":
+			delta = 0.0
+		"critical_failure":
+			delta = -1.0
+
+	if delta != 0.0:
+		for cm: CrewMember in roster:
+			var old_loyalty: float = cm.loyalty
+			cm.loyalty = clampf(cm.loyalty + delta, 0.0, 100.0)
+			DatabaseManager.update_crew_member(cm.id, {"loyalty": cm.loyalty})
+			if cm.loyalty != old_loyalty:
+				EventBus.loyalty_changed.emit(cm.id, cm.loyalty, old_loyalty)
+
+	# Near-death survival bonus
+	if float(GameManager.hull_current) < 0.25 * float(GameManager.hull_max):
+		for cm: CrewMember in roster:
+			cm.loyalty = minf(100.0, cm.loyalty + 3.0)
+			DatabaseManager.update_crew_member(cm.id, {"loyalty": cm.loyalty})
+		events.append("[color=#27AE60]The crew's trust deepens after surviving together.[/color]")
+
+	return events
+
+
+static func apply_decision_loyalty(roster: Array[CrewMember], decision_type: String) -> Array[String]:
+	## Evaluates crew value preferences against a decision type.
+	## Returns event text for reactions.
+	var events: Array[String] = []
+
+	# Map decision types to value alignments
+	var value_map: Dictionary = {
+		# Decision effects that align with values
+		"crew_conflict_mediate": {"COMPASSIONATE": true, "PRAGMATIC": false},
+		"crew_conflict_side_a": {"BOLD": true, "COMPASSIONATE": false},
+		"crew_conflict_side_b": {"BOLD": true, "COMPASSIONATE": false},
+		"crew_conflict_ignore": {"PRAGMATIC": true, "COMPASSIONATE": false},
+		"medical_agree": {"COMPASSIONATE": true, "BOLD": false},
+		"medical_push": {"BOLD": true, "COMPASSIONATE": false},
+		"homesick_agree": {"COMPASSIONATE": true, "PRAGMATIC": false},
+		"homesick_refuse": {"PRAGMATIC": true, "COMPASSIONATE": false},
+		"discovery_investigate": {"EXPLORATORY": true, "PRAGMATIC": false},
+		"discovery_decline": {"PRAGMATIC": true, "EXPLORATORY": false},
+		"pay_5050": {"PRAGMATIC": true},
+		"pay_4060": {"COMPASSIONATE": true},
+		"pay_hold": {"BOLD": true, "COMPASSIONATE": false},
+	}
+
+	var alignments: Dictionary = value_map.get(decision_type, {})
+	if alignments.is_empty():
+		return events
+
+	for cm: CrewMember in roster:
+		if cm.value_preference == "":
+			continue
+
+		var is_positive: bool = alignments.get(cm.value_preference, false) == true
+		var is_negative: bool = alignments.has(cm.value_preference) and alignments[cm.value_preference] == false
+		var delta: float = 0.0
+
+		if is_positive:
+			delta = 2.0
+		elif is_negative:
+			delta = -1.0 if cm.value_preference != "COMPASSIONATE" else -2.0
+		else:
+			continue
+
+		cm.loyalty = clampf(cm.loyalty + delta, 0.0, 100.0)
+		cm.value_evidence_count += 1
+		DatabaseManager.update_crew_member(cm.id, {
+			"loyalty": cm.loyalty,
+			"value_evidence_count": cm.value_evidence_count,
+		})
+
+		# Generate reaction text (not every time — 40% chance)
+		if randf() < 0.40:
+			var reaction: String = CrewEventTemplates.get_loyalty_reaction_text(
+				cm.crew_name, cm.value_preference, is_positive)
+			if reaction != "":
+				events.append("[color=#718096]%s[/color]" % reaction)
+
+	return events
+
+
+# === PHASE 5.2: HIGH LOYALTY EFFECTS ===
+
+static func get_loyalty_crisis_bonus(cm: CrewMember) -> float:
+	## Returns +5% bonus for high-loyalty crew during crisis.
+	if cm.loyalty > 75.0:
+		if float(GameManager.hull_current) < 0.30 * float(GameManager.hull_max):
+			return 0.05
+		if GameManager.get_ship_morale() < 30.0:
+			return 0.05
+	return 0.0
+
+
+static func get_loyalty_morale_anchor(cm: CrewMember, penalty: float) -> float:
+	## Reduces morale penalties by 25% for high-loyalty crew.
+	if cm.loyalty > 75.0 and penalty < 0.0:
+		return penalty * 0.75
+	return penalty
+
+
+# === PHASE 5.3: INJURY & DISEASE SYSTEM ===
+
+static func inflict_structured_injury(cm: CrewMember, severity_str: String,
+		has_medic: bool, medic_stat: float = 50.0) -> Dictionary:
+	## Creates a structured injury with location, severity, role-specific impact.
+	## Returns {event_text, severity_used, injury_data} or empty dict if medic prevented.
+	var severity: String = severity_str
+
+	# Medic severity downgrade
+	if has_medic:
+		if severity == "SEVERE":
+			var downgrade_chance: float = 0.15 + medic_stat / 200.0
+			if randf() < downgrade_chance:
+				severity = "MODERATE"
+		elif severity == "MODERATE":
+			var downgrade_chance: float = 0.30 + medic_stat / 200.0
+			if randf() < downgrade_chance:
+				severity = "MINOR"
+		elif severity == "MINOR":
+			return {}  # Medic patches it up
+
+	# Pick random location
+	var location: String = CrewMember.INJURY_LOCATIONS[randi() % CrewMember.INJURY_LOCATIONS.size()]
+
+	# Determine stat reductions per affected stat
+	var affected_stats: Array = CrewMember.INJURY_LOCATION_STATS.get(location, ["stamina"])
+	var reduction_base: int
+	var recovery_ticks: int
+	var can_permanent: bool = false
+
+	match severity:
+		"MINOR":
+			reduction_base = randi_range(3, 5)
+			recovery_ticks = randi_range(5, 8)
+		"MODERATE":
+			reduction_base = randi_range(6, 10)
+			recovery_ticks = randi_range(15, 25)
+		"SEVERE":
+			reduction_base = randi_range(10, 15)
+			recovery_ticks = randi_range(30, 50)
+			can_permanent = randf() < 0.20
+		_:
+			reduction_base = randi_range(3, 5)
+			recovery_ticks = randi_range(5, 8)
+
+	# Medic speeds recovery
+	if has_medic:
+		recovery_ticks = int(float(recovery_ticks) * 0.6)
+	else:
+		# No medic: SEVERE injuries can develop complications
+		if severity == "SEVERE" and randf() < 0.30:
+			recovery_ticks = int(float(recovery_ticks) * 1.5)
+			reduction_base += 3
+
+	# Vellani fragile bones: longer injury recovery
+	if cm.species == CrewMember.Species.VELLANI:
+		recovery_ticks = int(float(recovery_ticks) * 1.3)
+
+	# Build stats_affected array with role-specific multiplier
+	var primary_stat: String = CrewMember.ROLE_PRIMARY_STAT.get(cm.role, "resourcefulness")
+	var stats_affected: Array = []
+	for stat: String in affected_stats:
+		var reduction: int = reduction_base
+		# Role-specific: 1.5x for primary stat when injury location maps to it
+		if stat == primary_stat:
+			reduction = int(float(reduction) * 1.5)
+		stats_affected.append({"stat": stat, "reduction": reduction})
+
+	var desc_key: String = "%s_%s" % [location, severity]
+	var description: String = CrewMember.INJURY_DESCRIPTIONS.get(desc_key, "%s %s injury" % [severity.capitalize(), location.to_lower()])
+
+	var injury_data: Dictionary = {
+		"location": location,
+		"severity": severity,
+		"description": description,
+		"stats_affected": stats_affected,
+		"ticks_remaining": recovery_ticks,
+		"can_become_permanent": can_permanent,
+		"day_inflicted": GameManager.day_count,
+		# Legacy compatibility fields
+		"stat_affected": affected_stats[0] if affected_stats.size() > 0 else "stamina",
+		"reduction_amount": reduction_base,
+	}
+
+	cm.injuries.append(injury_data)
+	cm.total_injuries_sustained += 1
+	DatabaseManager.update_crew_member(cm.id, {
+		"injuries": JSON.stringify(cm.injuries),
+		"total_injuries_sustained": cm.total_injuries_sustained,
+	})
+
+	# Generate event text
+	var event_text: String
+	match severity:
+		"MINOR":
+			event_text = "[color=#E67E22]%s suffered a %s. Minor — they'll be fine.[/color]" % [cm.crew_name, description.to_lower()]
+		"MODERATE":
+			event_text = "[color=#C0392B]%s has a %s. They'll need time to recover.[/color]" % [cm.crew_name, description.to_lower()]
+		"SEVERE":
+			event_text = "[color=#C0392B]%s is badly hurt — %s. They need medical attention.[/color]" % [cm.crew_name, description.to_lower()]
+		_:
+			event_text = "[color=#E67E22]%s was injured.[/color]" % cm.crew_name
+
+	# Medic intervention text
+	if has_medic and severity_str != severity:
+		var medic_cm: CrewMember = _find_medic_in_roster(GameManager.get_crew_roster())
+		if medic_cm != null:
+			event_text += "\n" + "[color=#27AE60]%s[/color]" % CrewEventTemplates._pick(
+				CrewEventTemplates.MEDIC_INTERVENTION).replace("{medic}", medic_cm.crew_name).replace("{patient}", cm.crew_name)
+
+	return {"event_text": event_text, "severity_used": severity, "injury_data": injury_data}
+
+
+static func check_permanent_impairment(cm: CrewMember) -> Array[String]:
+	## Called when an injury finishes recovering. Checks for permanent impairment.
+	var events: Array[String] = []
+	var remaining_injuries: Array = []
+
+	for injury: Dictionary in cm.injuries:
+		if injury.get("ticks_remaining", 1) <= 0:
+			# Check permanent impairment
+			if injury.get("can_become_permanent", false):
+				var stats_list: Array = injury.get("stats_affected", [])
+				for sa: Dictionary in stats_list:
+					var permanent_amount: int = int(float(sa.get("reduction", 5)) * randf_range(0.3, 0.5))
+					if permanent_amount > 0:
+						cm.permanent_impairments.append({
+							"stat": sa.get("stat", "stamina"),
+							"amount": permanent_amount,
+							"source": injury.get("description", "old injury"),
+						})
+						events.append("[color=#C0392B]%s's injury has healed as much as it's going to. The %s will never be quite the same. But they've adapted — they see the world differently now.[/color]" % [
+							cm.crew_name, injury.get("location", "area").to_lower()])
+						EventBus.permanent_impairment.emit(cm.id, cm.crew_name, sa.get("stat", ""), permanent_amount)
+				DatabaseManager.update_crew_member(cm.id, {"permanent_impairments": JSON.stringify(cm.permanent_impairments)})
+
+				# Trigger Scarred trait if not already acquired
+				if not cm.has_trait("scarred"):
+					cm.traits.append("scarred")
+					DatabaseManager.update_crew_member(cm.id, {"traits": JSON.stringify(cm.traits)})
+					var tdef: Dictionary = CrewMember.TRAIT_DEFINITIONS.get("scarred", {})
+					events.append("[color=#E6D159][b]Trait Acquired:[/b] Scarred — %s[/color]" % tdef.get("acquisition_text", "").replace("{name}", cm.crew_name))
+					EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "scarred", "Scarred")
+		else:
+			remaining_injuries.append(injury)
+
+	# Also tick remaining injuries
+	for injury: Dictionary in remaining_injuries:
+		injury.ticks_remaining -= 1
+
+	cm.injuries = remaining_injuries
+	return events
+
+
+static func _inflict_disease(cm: CrewMember, disease_name: String, stat: String,
+		reduction: int, ticks: int, contagious: bool, all_stats: bool = false, has_medic: bool = false) -> String:
+	## Inflicts a disease on a crew member. Returns event text.
+	# Medic reduces severity
+	if has_medic:
+		reduction = maxi(1, reduction - 2)
+		ticks = int(float(ticks) * 0.7)
+
+	var disease: Dictionary = {
+		"name": disease_name,
+		"stat_affected": stat,
+		"reduction": reduction,
+		"ticks_remaining": ticks,
+		"contagious": contagious,
+		"all_stats": all_stats,
+		"species_specific": cm.get_species_name().to_upper(),
+	}
+	cm.diseases.append(disease)
+	DatabaseManager.update_crew_member(cm.id, {"diseases": JSON.stringify(cm.diseases)})
+	EventBus.crew_diseased.emit(cm.id, disease_name)
+
+	return "[color=#E67E22]%s has contracted %s.[/color]" % [cm.crew_name, disease_name]
+
+
+static func _check_disease_triggers(roster: Array[CrewMember], had_encounter: bool) -> Array[String]:
+	## Checks for disease trigger conditions each tick.
+	var events: Array[String] = []
+	var has_medic: bool = _has_medic_in_roster(roster)
+	var planet: Dictionary = GameManager.get_current_planet()
+
+	# Gorvian cold sensitivity: 10% per visit to cold planet
+	if planet.get("cold_environment", 0) == 1:
+		for cm: CrewMember in roster:
+			if cm.species == CrewMember.Species.GORVIAN and not _has_disease(cm, CrewEventTemplates.DISEASE_THERMAL_SHOCK):
+				if randf() < 0.10:
+					var text: String = _inflict_disease(cm, CrewEventTemplates.DISEASE_THERMAL_SHOCK,
+						"stamina", 7, randi_range(15, 20), true, false, has_medic)
+					events.append(text)
+
+	# Low food disease: 5% per tick when food < 2 days for 5+ ticks
+	var food_rate: float = GameManager.get_food_cost_per_jump()
+	var food_days: float = GameManager.food_supply / maxf(food_rate, 1.0) if food_rate > 0 else 999.0
+	if food_days < 2.0:
+		for cm: CrewMember in roster:
+			if cm.low_food_ticks >= 5 and not _has_disease(cm, "Malnutrition Sickness"):
+				if randf() < 0.05:
+					var text: String = _inflict_disease(cm, "Malnutrition Sickness",
+						"", 3, 10, false, true, has_medic)
+					events.append(text)
+
+	# Cargo contamination: 3% per jump
+	if had_encounter or randf() < 0.03:
+		if GameManager.get_total_cargo() > 0 and randf() < 0.03:
+			for cm: CrewMember in roster:
+				if cm.has_diseases():
+					continue
+				var species_name: String = cm.get_species_name().to_upper()
+				var disease_name: String = CrewEventTemplates.DISEASE_NAMES.get(species_name, "")
+				if disease_name == "" or _has_disease(cm, disease_name):
+					continue
+				match species_name:
+					"GORVIAN":
+						events.append(_inflict_disease(cm, disease_name, "cognition", 7, 20, true, false, has_medic))
+					"VELLANI":
+						events.append(_inflict_disease(cm, disease_name, "stamina", 10, 25, true, false, has_medic))
+					"KRELLVANI":
+						if GameManager.ship_class == "corvette":
+							events.append(_inflict_disease(cm, disease_name, "social", 7, 15, true, false, has_medic))
+					"HUMAN":
+						events.append(_inflict_disease(cm, disease_name, "", 2, 8, true, true, has_medic))
+				break  # Only one crew member per tick
+
+	# Disease spread: 15% per tick (5% with medic) among same species
+	var spread_chance: float = 0.05 if has_medic else 0.15
+	for cm: CrewMember in roster:
+		for disease: Dictionary in cm.diseases:
+			if not disease.get("contagious", false):
+				continue
+			var species_target: String = disease.get("species_specific", "")
+			for other: CrewMember in roster:
+				if other.id == cm.id:
+					continue
+				if other.get_species_name().to_upper() != species_target:
+					continue
+				if _has_disease(other, disease.get("name", "")):
+					continue
+				if other.is_quarantined:
+					if randf() < 0.02:  # Reduced spread during quarantine
+						var text: String = _inflict_disease(other, disease.get("name", ""),
+							disease.get("stat_affected", ""), disease.get("reduction", 3),
+							disease.get("ticks_remaining", 10), true, disease.get("all_stats", false), has_medic)
+						events.append(text)
+						events.append("[color=#E67E22]The %s has spread despite quarantine. %s is showing symptoms now.[/color]" % [disease.get("name", "disease"), other.crew_name])
+						EventBus.disease_spread.emit(other.id, disease.get("name", ""))
+				elif randf() < spread_chance:
+					var text: String = _inflict_disease(other, disease.get("name", ""),
+						disease.get("stat_affected", ""), disease.get("reduction", 3),
+						disease.get("ticks_remaining", 10), true, disease.get("all_stats", false), has_medic)
+					events.append(text)
+					events.append("[color=#E67E22]The %s has spread. %s is showing symptoms now.[/color]" % [disease.get("name", "disease"), other.crew_name])
+					EventBus.disease_spread.emit(other.id, disease.get("name", ""))
+
+	return events
+
+
+static func _process_disease_ticks(roster: Array[CrewMember]) -> Array[String]:
+	## Ticks disease timers, processes quarantine, checks cures.
+	var events: Array[String] = []
+	for cm: CrewMember in roster:
+		# Tick quarantine
+		if cm.is_quarantined:
+			cm.quarantine_ticks -= 1
+			if cm.quarantine_ticks <= 0:
+				cm.is_quarantined = false
+				cm.quarantine_ticks = 0
+				DatabaseManager.update_crew_member(cm.id, {"is_quarantined": 0, "quarantine_ticks": 0})
+				events.append("[color=#27AE60]%s has completed quarantine and returns to duty.[/color]" % cm.crew_name)
+
+		# Tick diseases
+		var cured: Array[String] = cm.tick_diseases()
+		for cure_text: String in cured:
+			events.append("[color=#27AE60]%s[/color]" % cure_text)
+		if not cured.is_empty():
+			DatabaseManager.update_crew_member(cm.id, {"diseases": JSON.stringify(cm.diseases)})
+
+		# Vellani + Bone Brittling: auto-upgrade injury severity
+		if cm.species == CrewMember.Species.VELLANI and _has_disease(cm, "Bone Brittling"):
+			# This is handled at injury time via the structured injury system
+			pass
+
+	return events
+
+
+static func _has_disease(cm: CrewMember, disease_name: String) -> bool:
+	for d: Dictionary in cm.diseases:
+		if d.get("name", "") == disease_name:
+			return true
+	return false
+
+
+static func _has_medic_in_roster(roster: Array[CrewMember]) -> bool:
+	for cm: CrewMember in roster:
+		if cm.role == CrewMember.Role.MEDIC:
+			return true
+	return false
+
+
+static func _find_medic_in_roster(roster: Array[CrewMember]) -> CrewMember:
+	for cm: CrewMember in roster:
+		if cm.role == CrewMember.Role.MEDIC:
+			return cm
+	return null
 
 
 static func _scale_ship_culture(cm: CrewMember) -> void:

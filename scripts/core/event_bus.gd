@@ -62,6 +62,22 @@ signal crew_memory_formed(crew_id: int, crew_name: String, trigger_text: String)
 signal crew_trait_acquired(crew_id: int, crew_name: String, trait_id: String, trait_name: String)
 signal ship_memory_formed(event_description: String)
 
+# === ROMANCE (Phase 5.1) ===
+signal romance_formed(crew_a_id: int, crew_b_id: int)
+signal romance_ended(crew_a_id: int, crew_b_id: int, reason: String)
+signal romance_warning(crew_a_id: int, crew_b_id: int)
+
+# === LOYALTY (Phase 5.2) ===
+signal loyalty_changed(crew_id: int, new_loyalty: float, old_loyalty: float)
+signal loyalty_stage_changed(crew_id: int, crew_name: String, stage: String)
+signal crew_departed(crew_id: int, crew_name: String)
+
+# === INJURY / DISEASE (Phase 5.3) ===
+signal crew_diseased(crew_id: int, disease_name: String)
+signal disease_spread(crew_id: int, disease_name: String)
+signal quarantine_started()
+signal permanent_impairment(crew_id: int, crew_name: String, stat: String, amount: int)
+
 # === UI ===
 signal message_logged(text: String, color: Color)
 signal scene_change_requested(scene_path: String)

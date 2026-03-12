@@ -365,3 +365,129 @@ static func get_memory_dialogue(crew_name: String, emotional_tag: String) -> Str
 	if MEMORY_DIALOGUE.has(emotional_tag):
 		return _pick(MEMORY_DIALOGUE[emotional_tag]).replace("{name}", crew_name)
 	return "%s is lost in thought for a moment." % crew_name
+
+
+# === ROMANCE TEXT (Phase 5.1) ===
+
+const ROMANCE_FORMATION: Array[String] = [
+	"You've noticed {a} and {b} spending their off-hours together. Not just as crewmates. Something's shifted between them.",
+	"It's the worst-kept secret on the ship. {a} and {b} are together. The crew pretends not to notice, but there are a lot of knowing smiles on the bridge.",
+	"You catch {a} and {b} in the corridor, standing closer than duty requires. They step apart when they see you, but the look between them says everything.",
+	"{a} brought {b} something from the last port. Nobody buys gifts for 'just a friend.' The crew exchanges glances.",
+	"The way {a} looks at {b} during briefings hasn't gone unnoticed. Something quiet and real has grown between them.",
+]
+
+const ROMANCE_POSITIVE: Array[String] = [
+	"{a} brought {b} breakfast from the galley. Small gestures, noticed by everyone.",
+	"You catch {a} and {b} sharing a quiet moment on the observation deck between jumps.",
+	"{a} patched up {b}'s console without being asked. {b} caught their eye and smiled.",
+	"The crew has started referring to {a} and {b} as a unit. They don't seem to mind.",
+	"You notice {a} saved the last cup of good coffee for {b}. Partnership in small things.",
+]
+
+const ROMANCE_STRESSED: Array[String] = [
+	"{a} and {b} are barely speaking. The warmth between them has gone cold.",
+	"You overhear {a} snap at {b} over something trivial. {b} walks away without responding.",
+	"{a} and {b} sit on opposite sides of the mess. The distance between them is louder than any argument.",
+]
+
+const ROMANCE_BREAKUP: Array[String] = [
+	"It's over between {a} and {b}. The ship feels different. Conversations stop when one of them enters a room. The crew is navigating around them like debris in a shipping lane.",
+]
+
+const ROMANCE_INJURY_CONCERN: Array[String] = [
+	"{a} hasn't left {b}'s side since the injury. It's affecting their focus.",
+	"{a} keeps checking on {b} between duties. The worry is written all over their face.",
+]
+
+
+static func get_romance_formation_text(name_a: String, name_b: String) -> String:
+	return _pick(ROMANCE_FORMATION).replace("{a}", name_a).replace("{b}", name_b)
+
+
+static func get_romance_event_text(name_a: String, name_b: String, morale_avg: float) -> String:
+	if morale_avg < 40.0:
+		return _pick(ROMANCE_STRESSED).replace("{a}", name_a).replace("{b}", name_b)
+	return _pick(ROMANCE_POSITIVE).replace("{a}", name_a).replace("{b}", name_b)
+
+
+# === LOYALTY TEXT (Phase 5.2) ===
+
+const LOYALTY_VALUE_REACTIONS: Dictionary = {
+	"CAUTIOUS_positive": [
+		"{name} nods approvingly at the cautious approach. They respect a captain who thinks before acting.",
+	],
+	"CAUTIOUS_negative": [
+		"{name}'s expression tightens. They would have preferred a safer course.",
+	],
+	"BOLD_positive": [
+		"{name} grins as you choose the bold path. They respect a captain with nerve.",
+	],
+	"BOLD_negative": [
+		"{name} seems frustrated at the cautious choice. They wanted action.",
+	],
+	"COMPASSIONATE_positive": [
+		"{name}'s face softens. They're glad you chose the compassionate path.",
+	],
+	"COMPASSIONATE_negative": [
+		"{name}'s expression tightens as you ignore those in need. They don't say anything, but you notice.",
+	],
+	"PRAGMATIC_positive": [
+		"{name} appreciates the practical decision. Efficiency matters to them.",
+	],
+	"PRAGMATIC_negative": [
+		"{name} winces at the unnecessary expense. They value practicality.",
+	],
+	"EXPLORATORY_positive": [
+		"{name}'s eyes light up at the chance to explore. This is why they're out here.",
+	],
+	"EXPLORATORY_negative": [
+		"{name} looks disappointed at the missed opportunity to discover something new.",
+	],
+}
+
+const LOYALTY_WITHDRAWAL: Array[String] = [
+	"{name} ate alone again today. They've been pulling away from the group.",
+	"{name} has been spending more time in their quarters. The distance is noticeable.",
+]
+
+const LOYALTY_VOCAL: Array[String] = [
+	"{name} has been openly critical of your decisions. The rest of the crew has noticed.",
+	"{name} challenged your judgment in front of the crew. The tension was palpable.",
+]
+
+const LOYALTY_DEPARTURE: Array[String] = [
+	"{name} is packed and waiting at the airlock when you dock. 'No hard feelings, Captain. I just can't anymore.' They walk down the ramp without looking back.",
+]
+
+const LOYALTY_VOLUNTEER: Array[String] = [
+	"{name} steps up to the console. 'I've watched enough to have a go, Captain.'",
+]
+
+
+static func get_loyalty_reaction_text(crew_name: String, value: String, is_positive: bool) -> String:
+	var key: String = "%s_%s" % [value, "positive" if is_positive else "negative"]
+	if LOYALTY_VALUE_REACTIONS.has(key):
+		return _pick(LOYALTY_VALUE_REACTIONS[key]).replace("{name}", crew_name)
+	return ""
+
+
+# === DISEASE TEXT (Phase 5.3) ===
+
+const DISEASE_NAMES: Dictionary = {
+	"GORVIAN": "Korrath Fever",
+	"VELLANI": "Bone Brittling",
+	"KRELLVANI": "Confinement Psychosis",
+	"HUMAN": "Common Spacer's Flu",
+}
+
+const DISEASE_THERMAL_SHOCK: String = "Thermal Shock Syndrome"
+
+const MEDIC_INTERVENTION: Array[String] = [
+	"Medic {medic} stabilizes {patient}'s condition. Without them, it could have been much worse.",
+	"Medic {medic} treats {patient} with practiced hands. Recovery will be faster with proper care.",
+]
+
+const NO_MEDIC_WARNING: Array[String] = [
+	"Without a medic on board, {name}'s injury is healing slowly. A proper medical facility would help.",
+]

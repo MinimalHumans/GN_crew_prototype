@@ -8,6 +8,9 @@ enum Species { HUMAN, GORVIAN, VELLANI, KRELLVANI }
 enum Role { GUNNER, ENGINEER, NAVIGATOR, MEDIC, COMMS_OFFICER, SCIENCE_OFFICER, SECURITY_CHIEF, GENERALIST }
 enum EmotionalTag { HARDENED, SHAKEN, PROUD, BITTER, GRATEFUL, CAUTIOUS, RECKLESS, INSPIRED }
 enum MemoryModifierType { COMBAT_PERFORMANCE, NAVIGATION_PERFORMANCE, FACTION_REACTION, MORALE_IN_CONTEXT, SCAN_PERFORMANCE, SOCIAL_PERFORMANCE }
+enum ValuePreference { CAUTIOUS, BOLD, COMPASSIONATE, PRAGMATIC, EXPLORATORY }
+enum InjuryLocation { HEAD, TORSO, ARMS, LEGS }
+enum InjurySeverity { MINOR, MODERATE, SEVERE }
 
 # === PROPERTIES ===
 
@@ -48,6 +51,17 @@ var docked_ticks: int = 0
 
 # Phase 4: In-memory cache (loaded separately)
 var memories: Array = []  # Loaded from crew_memories table when needed
+
+# Phase 5.2: Loyalty system
+var value_preference: String = ""  # CAUTIOUS, BOLD, COMPASSIONATE, PRAGMATIC, EXPLORATORY
+var value_evidence_count: int = 0  # Number of observed decision reactions
+var loyalty_departure_stage: int = 0  # 0=none, 1=withdrawal, 2=vocal, 3=ultimatum
+
+# Phase 5.3: Disease and impairment
+var diseases: Array = []  # [{name, stat_affected, reduction, ticks_remaining, contagious, species_specific}]
+var permanent_impairments: Array = []  # [{stat, amount, source}]
+var is_quarantined: bool = false
+var quarantine_ticks: int = 0
 
 
 # === SPECIES / ROLE DISPLAY ===
@@ -183,6 +197,50 @@ const TRAIT_DEFINITIONS: Dictionary = {
 	},
 }
 
+# Phase 5.2: Value preference display
+const VALUE_PREFERENCE_DISPLAY: Dictionary = {
+	"CAUTIOUS": "Values caution and careful planning",
+	"BOLD": "Respects bold, decisive action",
+	"COMPASSIONATE": "Driven by compassion and empathy",
+	"PRAGMATIC": "Prefers practical, efficient solutions",
+	"EXPLORATORY": "Curious and eager to explore the unknown",
+}
+
+# Phase 5.2: Loyalty word descriptors
+const LOYALTY_WORDS: Array[Array] = [
+	[85.0, "Devoted"],
+	[65.0, "Loyal"],
+	[40.0, "Steady"],
+	[25.0, "Wavering"],
+	[10.0, "Disaffected"],
+	[0.0, "Ready to leave"],
+]
+
+# Phase 5.3: Injury location → affected stats
+const INJURY_LOCATION_STATS: Dictionary = {
+	"HEAD": ["cognition", "social"],
+	"TORSO": ["stamina", "resourcefulness"],
+	"ARMS": ["reflexes", "cognition"],
+	"LEGS": ["stamina", "reflexes"],
+}
+
+const INJURY_LOCATIONS: Array[String] = ["HEAD", "TORSO", "ARMS", "LEGS"]
+
+const INJURY_DESCRIPTIONS: Dictionary = {
+	"HEAD_MINOR": "Minor head laceration",
+	"HEAD_MODERATE": "Moderate concussion",
+	"HEAD_SEVERE": "Severe cranial trauma",
+	"TORSO_MINOR": "Bruised ribs",
+	"TORSO_MODERATE": "Cracked ribs",
+	"TORSO_SEVERE": "Severe torso trauma",
+	"ARMS_MINOR": "Sprained wrist",
+	"ARMS_MODERATE": "Moderate arm fracture",
+	"ARMS_SEVERE": "Severe compound fracture",
+	"LEGS_MINOR": "Twisted ankle",
+	"LEGS_MODERATE": "Knee injury",
+	"LEGS_SEVERE": "Severe leg trauma",
+}
+
 # Emotional tag names for display
 const EMOTIONAL_TAG_NAMES: Dictionary = {
 	"HARDENED": "Hardened",
@@ -229,7 +287,7 @@ func get_experience_multiplier() -> float:
 
 
 func get_effective_stat(stat_name: String) -> float:
-	## Full stat chain: base * experience * morale * fatigue + trait_bonuses - injuries.
+	## Full stat chain: base * experience * morale * fatigue + trait_bonuses - injuries - impairments - diseases.
 	var base: int = get_base_stat(stat_name)
 	var effective: float = float(base) * get_experience_multiplier() * get_morale_modifier() * get_fatigue_modifier()
 	# Add trait bonuses
@@ -238,6 +296,16 @@ func get_effective_stat(stat_name: String) -> float:
 	for injury: Dictionary in injuries:
 		if injury.get("stat_affected", "") == stat_name:
 			effective -= float(injury.get("reduction_amount", 0))
+	# Phase 5.3: Subtract permanent impairments
+	for imp: Dictionary in permanent_impairments:
+		if imp.get("stat", "") == stat_name:
+			effective -= float(imp.get("amount", 0))
+	# Phase 5.3: Subtract disease reductions
+	for disease: Dictionary in diseases:
+		if disease.get("stat_affected", "") == stat_name:
+			effective -= float(disease.get("reduction", 0))
+		elif disease.get("all_stats", false):
+			effective -= float(disease.get("reduction", 0))
 	return maxf(effective, 1.0)
 
 
@@ -438,6 +506,139 @@ func _format_trait_effects(effects: Dictionary, is_positive: bool) -> String:
 	return ", ".join(parts)
 
 
+# === ROMANCE HELPERS (Phase 5.1) ===
+
+func get_top_stats(count: int = 3) -> Array[String]:
+	## Returns the top N stat names sorted by value descending.
+	var stat_pairs: Array[Array] = [
+		[stamina, "stamina"], [cognition, "cognition"], [reflexes, "reflexes"],
+		[social, "social"], [resourcefulness, "resourcefulness"],
+	]
+	stat_pairs.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+	var result: Array[String] = []
+	for i: int in range(mini(count, stat_pairs.size())):
+		result.append(stat_pairs[i][1])
+	return result
+
+
+func is_romance_compatible(other: CrewMember) -> bool:
+	## Returns true if stat profiles allow romantic attraction.
+	## Top 2 must not be identical. Must share at least 1 in top 3.
+	var my_top2: Array[String] = get_top_stats(2)
+	var other_top2: Array[String] = other.get_top_stats(2)
+	# Check: top 2 are not identical
+	if my_top2[0] == other_top2[0] and my_top2[1] == other_top2[1]:
+		return false
+	# Check: share at least 1 in top 3
+	var my_top3: Array[String] = get_top_stats(3)
+	var other_top3: Array[String] = other.get_top_stats(3)
+	for stat: String in my_top3:
+		if stat in other_top3:
+			return true
+	return false
+
+
+# === LOYALTY HELPERS (Phase 5.2) ===
+
+func get_loyalty_word() -> String:
+	## Returns a word descriptor for loyalty level.
+	for threshold: Array in LOYALTY_WORDS:
+		if loyalty >= threshold[0]:
+			return threshold[1]
+	return "Ready to leave"
+
+
+func get_loyalty_color() -> String:
+	var word: String = get_loyalty_word()
+	match word:
+		"Devoted": return "#27AE60"
+		"Loyal": return "#4CAF50"
+		"Steady": return "#4A90D9"
+		"Wavering": return "#E67E22"
+		"Disaffected": return "#C0392B"
+		"Ready to leave": return "#C0392B"
+		_: return "#718096"
+
+
+func get_value_display() -> String:
+	## Returns the value preference display text if enough evidence.
+	if value_evidence_count < 3:
+		return ""
+	return VALUE_PREFERENCE_DISPLAY.get(value_preference, "")
+
+
+static func assign_value_preference(cm: CrewMember) -> String:
+	## Assigns a value preference based on stat profile.
+	var highest_stat: String = cm.get_top_stats(1)[0]
+	if highest_stat in ["stamina", "reflexes"] and cm.social < 45:
+		return "BOLD"
+	elif highest_stat == "social":
+		return "COMPASSIONATE"
+	elif highest_stat == "cognition":
+		if randf() < 0.5:
+			return "CAUTIOUS"
+		else:
+			return "EXPLORATORY"
+	else:
+		return "PRAGMATIC"
+
+
+# === DISEASE HELPERS (Phase 5.3) ===
+
+func has_diseases() -> bool:
+	return not diseases.is_empty()
+
+
+func get_disease_text() -> Array[String]:
+	## Returns display strings for each active disease.
+	var texts: Array[String] = []
+	for disease: Dictionary in diseases:
+		var name_str: String = disease.get("name", "Unknown")
+		var stat: String = disease.get("stat_affected", "").capitalize()
+		var reduction: int = disease.get("reduction", 0)
+		var ticks: int = disease.get("ticks_remaining", 0)
+		var contagious_tag: String = " Contagious." if disease.get("contagious", false) else ""
+		if disease.get("all_stats", false):
+			texts.append("%s — All stats -%d. Recovering (%d days).%s" % [name_str, reduction, ticks, contagious_tag])
+		else:
+			texts.append("%s — %s -%d. Recovering (%d days).%s" % [name_str, stat, reduction, ticks, contagious_tag])
+	return texts
+
+
+func tick_diseases() -> Array[String]:
+	## Decrements disease timers. Returns text for cured diseases.
+	var cured: Array[String] = []
+	var remaining: Array = []
+	for disease: Dictionary in diseases:
+		disease.ticks_remaining -= 1
+		if disease.ticks_remaining <= 0:
+			cured.append("%s has recovered from %s." % [crew_name, disease.get("name", "disease")])
+		else:
+			remaining.append(disease)
+	diseases = remaining
+	return cured
+
+
+func get_injury_text_structured() -> Array[String]:
+	## Returns display strings for structured injuries (Phase 5.3).
+	var texts: Array[String] = []
+	for injury: Dictionary in injuries:
+		var location: String = injury.get("location", "").capitalize()
+		var severity: String = injury.get("severity", "").capitalize()
+		var desc: String = injury.get("description", "Injury")
+		var ticks: int = injury.get("ticks_remaining", 0)
+		var stats_text: String = ""
+		var stats_list: Array = injury.get("stats_affected", [])
+		for i: int in range(stats_list.size()):
+			var sa: Dictionary = stats_list[i]
+			if i > 0:
+				stats_text += ", "
+			stats_text += "%s -%d" % [sa.get("stat", "").capitalize(), sa.get("reduction", 0)]
+		var perm_text: String = " [PERMANENT RISK]" if injury.get("can_become_permanent", false) else ""
+		texts.append("%s — %s. Recovering (%d days).%s" % [desc, stats_text, ticks, perm_text])
+	return texts
+
+
 # === DISPLAY HELPERS ===
 
 func get_species_name() -> String:
@@ -556,6 +757,13 @@ static func from_dict(data: Dictionary) -> CrewMember:
 	cm.conflicts_mediated = data.get("conflicts_mediated", 0)
 	cm.total_injuries_sustained = data.get("total_injuries_sustained", 0)
 	cm.docked_ticks = data.get("docked_ticks", 0)
+	# Phase 5.2 fields
+	cm.value_preference = data.get("value_preference", "")
+	cm.value_evidence_count = data.get("value_evidence_count", 0)
+	cm.loyalty_departure_stage = data.get("loyalty_departure_stage", 0)
+	# Phase 5.3 fields
+	cm.is_quarantined = bool(data.get("is_quarantined", 0))
+	cm.quarantine_ticks = data.get("quarantine_ticks", 0)
 	# Parse JSON fields
 	var injuries_str: String = data.get("injuries", "[]")
 	if injuries_str != "" and injuries_str != "[]":
@@ -572,6 +780,19 @@ static func from_dict(data: Dictionary) -> CrewMember:
 		var parsed: Variant = JSON.parse_string(traits_str)
 		if parsed is Array:
 			cm.traits = parsed
+	var diseases_str: String = data.get("diseases", "[]")
+	if diseases_str != "" and diseases_str != "[]":
+		var parsed: Variant = JSON.parse_string(diseases_str)
+		if parsed is Array:
+			cm.diseases = parsed
+	var impairments_str: String = data.get("permanent_impairments", "[]")
+	if impairments_str != "" and impairments_str != "[]":
+		var parsed: Variant = JSON.parse_string(impairments_str)
+		if parsed is Array:
+			cm.permanent_impairments = parsed
+	# Assign value preference if missing
+	if cm.value_preference == "":
+		cm.value_preference = assign_value_preference(cm)
 	return cm
 
 
@@ -605,6 +826,13 @@ func to_dict() -> Dictionary:
 		"conflicts_mediated": conflicts_mediated,
 		"total_injuries_sustained": total_injuries_sustained,
 		"docked_ticks": docked_ticks,
+		"value_preference": value_preference,
+		"value_evidence_count": value_evidence_count,
+		"loyalty_departure_stage": loyalty_departure_stage,
+		"diseases": JSON.stringify(diseases),
+		"permanent_impairments": JSON.stringify(permanent_impairments),
+		"is_quarantined": 1 if is_quarantined else 0,
+		"quarantine_ticks": quarantine_ticks,
 	}
 
 

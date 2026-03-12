@@ -196,7 +196,17 @@ func _make_crew_slot(cm: CrewMember) -> PanelContainer:
 
 	# Role and species
 	var info_lbl: Label = Label.new()
-	info_lbl.text = "%s — %s" % [cm.get_role_name(), cm.get_species_name()]
+	var info_text: String = "%s — %s" % [cm.get_role_name(), cm.get_species_name()]
+	# Phase 5.1: Romance indicator
+	if DatabaseManager.is_in_romance(cm.id):
+		info_text += " ♥"
+	# Phase 5.3: Disease indicator
+	if cm.has_diseases():
+		info_text += " ⚠"
+	# Phase 5.3: Quarantine indicator
+	if cm.is_quarantined:
+		info_text += " Q"
+	info_lbl.text = info_text
 	info_lbl.add_theme_font_size_override("font_size", 10)
 	info_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
 	vbox.add_child(info_lbl)
@@ -323,8 +333,41 @@ func _show_crew_profile(cm: CrewMember) -> void:
 	growth_row.add_child(growth_val)
 	detail_panel.add_child(growth_row)
 
+	# Phase 5.2: Value preference hint (when evidence >= 3)
+	if cm.value_evidence_count >= 3 and cm.value_preference != "":
+		var value_row: HBoxContainer = HBoxContainer.new()
+		value_row.add_theme_constant_override("separation", 4)
+		var value_prefix: Label = Label.new()
+		value_prefix.text = "Values:"
+		value_prefix.add_theme_font_size_override("font_size", 11)
+		value_prefix.add_theme_color_override("font_color", Color(COLOR_MUTED))
+		value_row.add_child(value_prefix)
+		var value_val: Label = Label.new()
+		value_val.text = cm.get_value_display()
+		value_val.add_theme_font_size_override("font_size", 11)
+		value_val.add_theme_color_override("font_color", Color(COLOR_ACCENT))
+		value_row.add_child(value_val)
+		detail_panel.add_child(value_row)
+
+	# Phase 5.1: Romance display
+	var partner_id: int = DatabaseManager.get_partner_id(cm.id)
+	if partner_id >= 0:
+		var partner_data: Dictionary = DatabaseManager.get_crew_member(partner_id)
+		if not partner_data.is_empty():
+			var rom_lbl: Label = Label.new()
+			rom_lbl.text = "♥ In a relationship with %s" % partner_data.get("name", "Unknown")
+			rom_lbl.add_theme_font_size_override("font_size", 11)
+			rom_lbl.add_theme_color_override("font_color", Color("#E6D159"))
+			detail_panel.add_child(rom_lbl)
+
 	# Active injuries
 	_add_injury_summary(cm)
+
+	# Phase 5.3: Diseases (separate from injuries, orange)
+	_add_disease_summary(cm)
+
+	# Phase 5.3: Permanent impairments
+	_add_permanent_impairments(cm)
 
 	# Relationships
 	_add_relationship_summary(cm)
@@ -459,7 +502,7 @@ func _make_condition_bars(cm: CrewMember) -> HBoxContainer:
 	fatigue_box.add_child(fatigue_val)
 	row.add_child(fatigue_box)
 
-	# Loyalty
+	# Loyalty (Phase 5.2: shown as word, not number)
 	var loyalty_box: HBoxContainer = HBoxContainer.new()
 	loyalty_box.add_theme_constant_override("separation", 4)
 
@@ -468,17 +511,10 @@ func _make_condition_bars(cm: CrewMember) -> HBoxContainer:
 	loyalty_label.add_theme_font_size_override("font_size", 11)
 	loyalty_box.add_child(loyalty_label)
 
-	var loyalty_bar: ProgressBar = ProgressBar.new()
-	loyalty_bar.min_value = 0
-	loyalty_bar.max_value = 100
-	loyalty_bar.value = cm.loyalty
-	loyalty_bar.show_percentage = false
-	loyalty_bar.custom_minimum_size = Vector2(60, 12)
-	loyalty_box.add_child(loyalty_bar)
-
 	var loyalty_val: Label = Label.new()
-	loyalty_val.text = "%.0f" % cm.loyalty
+	loyalty_val.text = cm.get_loyalty_word()
 	loyalty_val.add_theme_font_size_override("font_size", 10)
+	loyalty_val.add_theme_color_override("font_color", Color(cm.get_loyalty_color()))
 	loyalty_box.add_child(loyalty_val)
 	row.add_child(loyalty_box)
 
@@ -496,14 +532,63 @@ func _add_injury_summary(cm: CrewMember) -> void:
 	inj_header.add_theme_color_override("font_color", Color(COLOR_BAD))
 	detail_panel.add_child(inj_header)
 
-	var injury_texts: Array[String] = cm.get_injury_text()
+	# Phase 5.3: Use structured injury text (includes location, severity, multi-stat)
+	var injury_texts: Array[String] = cm.get_injury_text_structured()
 	for inj_text: String in injury_texts:
 		var inj_lbl: Label = Label.new()
 		inj_lbl.text = "  ⚠ %s" % inj_text
 		inj_lbl.add_theme_font_size_override("font_size", 10)
-		inj_lbl.add_theme_color_override("font_color", Color(COLOR_WARN))
+		inj_lbl.add_theme_color_override("font_color", Color(COLOR_BAD))
 		inj_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		detail_panel.add_child(inj_lbl)
+
+
+func _add_disease_summary(cm: CrewMember) -> void:
+	## Displays active diseases for a crew member.
+	if not cm.has_diseases():
+		return
+
+	var dis_header: Label = Label.new()
+	dis_header.text = "Active Diseases:"
+	dis_header.add_theme_font_size_override("font_size", 11)
+	dis_header.add_theme_color_override("font_color", Color(COLOR_WARN))
+	detail_panel.add_child(dis_header)
+
+	for disease: Dictionary in cm.diseases:
+		var dis_lbl: Label = Label.new()
+		var contagious_tag: String = " [Contagious]" if disease.get("contagious", false) else ""
+		var ticks: int = disease.get("ticks_remaining", 0)
+		dis_lbl.text = "  ⚠ %s%s — %d ticks remaining" % [disease.get("name", "Unknown"), contagious_tag, ticks]
+		dis_lbl.add_theme_font_size_override("font_size", 10)
+		dis_lbl.add_theme_color_override("font_color", Color(COLOR_WARN))
+		dis_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		detail_panel.add_child(dis_lbl)
+
+	if cm.is_quarantined:
+		var q_lbl: Label = Label.new()
+		q_lbl.text = "  ⛔ QUARANTINED — %d ticks remaining" % cm.quarantine_ticks
+		q_lbl.add_theme_font_size_override("font_size", 10)
+		q_lbl.add_theme_color_override("font_color", Color(COLOR_BAD))
+		detail_panel.add_child(q_lbl)
+
+
+func _add_permanent_impairments(cm: CrewMember) -> void:
+	## Displays permanent stat impairments.
+	if cm.permanent_impairments.is_empty():
+		return
+
+	var imp_header: Label = Label.new()
+	imp_header.text = "Permanent Impairments:"
+	imp_header.add_theme_font_size_override("font_size", 11)
+	imp_header.add_theme_color_override("font_color", Color(COLOR_BAD))
+	detail_panel.add_child(imp_header)
+
+	for imp: Dictionary in cm.permanent_impairments:
+		var imp_lbl: Label = Label.new()
+		imp_lbl.text = "  ✦ %s -%d (%s)" % [imp.get("stat", "").capitalize(), imp.get("amount", 0), imp.get("source", "old injury")]
+		imp_lbl.add_theme_font_size_override("font_size", 10)
+		imp_lbl.add_theme_color_override("font_color", Color(COLOR_BAD))
+		detail_panel.add_child(imp_lbl)
 
 
 func _add_relationship_summary(cm: CrewMember) -> void:
