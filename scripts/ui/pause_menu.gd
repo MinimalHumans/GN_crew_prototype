@@ -24,6 +24,7 @@ var _overlay: ColorRect
 var _panel: PanelContainer
 var _main_vbox: VBoxContainer
 var _confirm_dialog: VBoxContainer
+var _debug_scroll: ScrollContainer
 var _debug_section: VBoxContainer
 var _debug_toggle: Button
 var _feedback_label: Label
@@ -153,11 +154,18 @@ func _build_ui() -> void:
 	_debug_toggle.pressed.connect(_toggle_debug)
 	_main_vbox.add_child(_debug_toggle)
 
-	# Debug section (hidden by default)
+	# Debug section (hidden by default, scrollable)
+	_debug_scroll = ScrollContainer.new()
+	_debug_scroll.visible = false
+	_debug_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_debug_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_debug_scroll.custom_minimum_size = Vector2(0, 400)
+	_main_vbox.add_child(_debug_scroll)
+
 	_debug_section = VBoxContainer.new()
 	_debug_section.add_theme_constant_override("separation", 4)
-	_debug_section.visible = false
-	_main_vbox.add_child(_debug_section)
+	_debug_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_debug_scroll.add_child(_debug_section)
 
 	# --- Economy Section ---
 	_add_debug_section_header("ECONOMY")
@@ -243,7 +251,7 @@ func _on_confirm_exit() -> void:
 
 func _toggle_debug() -> void:
 	_debug_expanded = not _debug_expanded
-	_debug_section.visible = _debug_expanded
+	_debug_scroll.visible = _debug_expanded
 	_debug_toggle.text = "▼ Debug Tools" if _debug_expanded else "▶ Debug Tools"
 
 
