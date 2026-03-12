@@ -809,6 +809,12 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("crew_members", "stat_bonus_all", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "morale_floor", "REAL DEFAULT 0.0")
 	_add_column_if_missing("save_state", "combat_morale_resistance", "REAL DEFAULT 0.0")
+	# Phase 6: Hospital checkup bonus
+	_add_column_if_missing("crew_members", "checkup_bonus_ticks", "INTEGER DEFAULT 0")
+	# Phase 6: Economy tracking
+	_add_column_if_missing("save_state", "total_credits_earned", "INTEGER DEFAULT 0")
+	_add_column_if_missing("save_state", "total_credits_spent", "INTEGER DEFAULT 0")
+	_add_column_if_missing("save_state", "win_triggered", "INTEGER DEFAULT 0")
 	# Seed Phase 3 planet flags
 	_seed_phase3_planet_flags()
 	# Seed Phase 5.3 hospital flags

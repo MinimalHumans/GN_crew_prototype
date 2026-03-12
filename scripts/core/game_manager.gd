@@ -91,6 +91,11 @@ var last_crew_gen_mission_tick: int = 0
 var morale_floor: float = 0.0
 var combat_morale_resistance: float = 0.0
 
+# Phase 6: Economy tracking (persisted in save_state)
+var total_credits_earned: int = 0
+var total_credits_spent: int = 0
+var win_triggered: bool = false
+
 # Phase 3 one-time log flags (reset per session)
 var gorvian_fuel_logged: bool = false
 var claustrophobia_logged: Dictionary = {}  # {crew_id: true}
@@ -159,6 +164,9 @@ func _load_state_from_db() -> void:
 	last_crew_gen_mission_tick = save_data.get("last_crew_gen_mission_tick", 0)
 	morale_floor = save_data.get("morale_floor", 0.0)
 	combat_morale_resistance = save_data.get("combat_morale_resistance", 0.0)
+	total_credits_earned = save_data.get("total_credits_earned", 0)
+	total_credits_spent = save_data.get("total_credits_spent", 0)
+	win_triggered = bool(save_data.get("win_triggered", 0))
 
 	# Load captain stats
 	var stats: Dictionary = DatabaseManager.get_captain_stats(save_id)
@@ -208,6 +216,9 @@ func save_game() -> void:
 		"last_crew_gen_mission_tick": last_crew_gen_mission_tick,
 		"morale_floor": morale_floor,
 		"combat_morale_resistance": combat_morale_resistance,
+		"total_credits_earned": total_credits_earned,
+		"total_credits_spent": total_credits_spent,
+		"win_triggered": 1 if win_triggered else 0,
 	})
 
 	DatabaseManager.update_captain_stats(save_id, {
@@ -232,13 +243,19 @@ func save_game() -> void:
 
 func add_credits(amount: int) -> void:
 	credits += amount
+	total_credits_earned += amount
 	EventBus.credits_changed.emit(credits)
+	# Check win condition
+	if not win_triggered and total_credits_earned >= 25000:
+		win_triggered = true
+		EventBus.win_condition_reached.emit(total_credits_earned)
 
 
 func spend_credits(amount: int) -> bool:
 	if credits < amount:
 		return false
 	credits -= amount
+	total_credits_spent += amount
 	EventBus.credits_changed.emit(credits)
 	return true
 

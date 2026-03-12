@@ -172,6 +172,11 @@ func _make_candidate_card(cm: CrewMember, index: int) -> PanelContainer:
 	# Stat bars (compact)
 	vbox.add_child(_make_stat_bars(cm))
 
+	# Comparison with existing crew of same role
+	var comparison: Label = _make_comparison_label(cm)
+	if comparison != null:
+		vbox.add_child(comparison)
+
 	# Personality
 	var pers_lbl: Label = Label.new()
 	pers_lbl.text = cm.personality
@@ -192,8 +197,8 @@ func _make_candidate_card(cm: CrewMember, index: int) -> PanelContainer:
 
 	var recruit_btn: Button = Button.new()
 	recruit_btn.text = "Recruit"
-	recruit_btn.custom_minimum_size = Vector2(80, 28)
-	recruit_btn.add_theme_font_size_override("font_size", 12)
+	recruit_btn.custom_minimum_size = Vector2(120, 42)
+	recruit_btn.add_theme_font_size_override("font_size", 18)
 
 	var check: Dictionary = GameManager.can_recruit(cm)
 	if not check.can:
@@ -206,6 +211,30 @@ func _make_candidate_card(cm: CrewMember, index: int) -> PanelContainer:
 	vbox.add_child(btn_row)
 	card.add_child(vbox)
 	return card
+
+
+func _make_comparison_label(candidate: CrewMember) -> Label:
+	## Returns a label comparing this candidate to existing crew of the same role.
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	var same_role: Array[CrewMember] = []
+	for cm: CrewMember in roster:
+		if cm.role == candidate.role:
+			same_role.append(cm)
+	if same_role.is_empty():
+		return null
+	# Compare to best existing crew of same role
+	var best: CrewMember = same_role[0]
+	for cm: CrewMember in same_role:
+		if cm.get_stat_total() > best.get_stat_total():
+			best = cm
+	var diff: int = candidate.get_stat_total() - best.get_stat_total()
+	var color: String = COLOR_GOOD if diff > 0 else (COLOR_BAD if diff < 0 else COLOR_MUTED)
+	var sign: String = "+" if diff > 0 else ""
+	var lbl: Label = Label.new()
+	lbl.text = "vs %s (%s): %s%d total stats" % [best.crew_name, best.get_role_name(), sign, diff]
+	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_color_override("font_color", Color(color))
+	return lbl
 
 
 func _make_stat_bars(cm: CrewMember) -> HBoxContainer:

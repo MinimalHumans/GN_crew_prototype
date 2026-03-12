@@ -125,6 +125,11 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 
 		cm.fatigue = clampf(cm.fatigue + fatigue_delta, 0.0, 100.0)
 
+		# Phase 6: Hospital checkup bonus (+5 fatigue recovery per tick during jumps too)
+		if cm.checkup_bonus_ticks > 0:
+			cm.fatigue = maxf(0.0, cm.fatigue - 5.0)
+			cm.checkup_bonus_ticks -= 1
+
 		# --- Comfort food countdown ---
 		if cm.comfort_food_ticks > 0:
 			cm.comfort_food_ticks -= 1
@@ -249,6 +254,7 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			"grief_ticks_remaining": cm.grief_ticks_remaining,
 			"stat_bonus_all": cm.stat_bonus_all,
 			"origin": cm.origin,
+			"checkup_bonus_ticks": cm.checkup_bonus_ticks,
 		})
 
 	# --- Phase 4.4: Ship memory triggers ---
@@ -328,6 +334,11 @@ static func tick_planet_arrival() -> Array[String]:
 		# Fatigue recovery — docking counts as rest
 		var old_fatigue: float = cm.fatigue
 		cm.fatigue = maxf(0.0, cm.fatigue - 8.0)
+
+		# Phase 6: Hospital checkup bonus (+5 fatigue recovery per tick)
+		if cm.checkup_bonus_ticks > 0:
+			cm.fatigue = maxf(0.0, cm.fatigue - 5.0)
+			cm.checkup_bonus_ticks -= 1
 
 		# Track docked ticks for Spacer's Instinct restlessness
 		cm.docked_ticks += 1
@@ -416,6 +427,7 @@ static func tick_planet_arrival() -> Array[String]:
 			"grief_state": cm.grief_state,
 			"grief_ticks_remaining": cm.grief_ticks_remaining,
 			"stat_bonus_all": cm.stat_bonus_all,
+			"checkup_bonus_ticks": cm.checkup_bonus_ticks,
 		})
 
 		# Log notable fatigue recovery

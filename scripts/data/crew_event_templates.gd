@@ -32,6 +32,18 @@ const SLICE_OF_LIFE: Array[String] = [
 	"{b} has been whistling the same tune for three jumps. It's oddly comforting.",
 	"{a} is cataloging star formations in a personal journal. Old habit, they say.",
 	"{a} shared some dried fruit from their home planet. It tastes strange but the gesture matters.",
+	"{a} fell asleep in the common room. {b} draped a blanket over them without a word.",
+	"Someone scratched a good-luck symbol into the bulkhead near the airlock. Spacer tradition.",
+	"{a} is teaching {b} a few words in their native language. Progress is slow but earnest.",
+	"{a} found an old data chip wedged behind a panel. The music on it is centuries old.",
+	"The galley smells like burned toast. {a} claims it was intentional. Nobody believes them.",
+	"{b} rigged a small reading light above their bunk. {a} wants one too.",
+	"{a} and {b} are arm-wrestling in the mess. The crew has picked sides.",
+	"You notice {a} has started keeping a plant in a ration container. It's barely surviving, but so are they.",
+	"{a} spent the quiet shift polishing their boots. Old military habit, they say.",
+	"The crew voted on a name for the ship's resident pest — a persistent vent beetle.",
+	"{a} left a small thank-you note on {b}'s workstation. No explanation needed.",
+	"{b} has been sketching crew portraits during downtime. They're getting better.",
 ]
 
 # === SOCIAL INTERACTION TEXT ===

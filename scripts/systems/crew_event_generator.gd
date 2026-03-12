@@ -69,8 +69,8 @@ static func _generate_background_events(roster: Array[CrewMember]) -> Array[Stri
 	if food_days <= 1.0 and food_days >= 0.0:
 		events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates._pick(CrewEventTemplates.FOOD_LOW))
 
-	# Random slice-of-life (5% chance per tick)
-	if roster.size() >= 2 and randf() < 0.05:
+	# Random slice-of-life (8% chance per tick — increased in Phase 6 with expanded text pool)
+	if roster.size() >= 2 and randf() < 0.08:
 		var idx_a: int = randi() % roster.size()
 		var idx_b: int = (idx_a + 1 + randi() % (roster.size() - 1)) % roster.size()
 		var text: String = CrewEventTemplates.get_slice_of_life(
@@ -81,7 +81,7 @@ static func _generate_background_events(roster: Array[CrewMember]) -> Array[Stri
 	for cm: CrewMember in roster:
 		if cm.memories.is_empty():
 			cm.load_memories()
-		if not cm.memories.is_empty() and randf() < 0.30:
+		if not cm.memories.is_empty() and randf() < 0.20:
 			# Pick a random memory and generate dialogue
 			var mem: Dictionary = cm.memories[randi() % cm.memories.size()]
 			var tag: String = mem.get("emotional_tag", "")

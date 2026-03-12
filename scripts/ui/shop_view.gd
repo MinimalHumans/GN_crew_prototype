@@ -91,7 +91,7 @@ func _build_ui() -> void:
 	var header: HBoxContainer = HBoxContainer.new()
 	var back_btn: Button = Button.new()
 	back_btn.text = "< Back"
-	back_btn.custom_minimum_size = Vector2(80, 32)
+	back_btn.custom_minimum_size = Vector2(120, 48)
 	back_btn.pressed.connect(func() -> void: back_pressed.emit())
 	header.add_child(back_btn)
 

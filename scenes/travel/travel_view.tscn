@@ -27,26 +27,26 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/margin_left = 60
-theme_override_constants/margin_top = 30
-theme_override_constants/margin_right = 60
-theme_override_constants/margin_bottom = 30
+theme_override_constants/margin_left = 90
+theme_override_constants/margin_top = 45
+theme_override_constants/margin_right = 90
+theme_override_constants/margin_bottom = 45
 
 [node name="VBox" type="VBoxContainer" parent="MarginContainer"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 18
 
 [node name="TitleLabel" type="Label" parent="MarginContainer/VBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.29, 0.565, 0.851, 1)
-theme_override_font_sizes/font_size = 24
+theme_override_font_sizes/font_size = 36
 text = "Haven → Meridian"
 horizontal_alignment = 1
 
 [node name="JumpLabel" type="Label" parent="MarginContainer/VBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 24
 text = "Preparing for departure..."
 horizontal_alignment = 1
 
@@ -66,11 +66,11 @@ layout_mode = 2
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.443, 0.502, 0.588, 1)
-theme_override_font_sizes/font_size = 13
+theme_override_font_sizes/font_size = 20
 text = "Fuel: 30/30  |  Food: N/A  |  Day 1"
 
 [node name="ContinueButton" type="Button" parent="MarginContainer/VBox"]
 layout_mode = 2
-custom_minimum_size = Vector2(0, 48)
-theme_override_font_sizes/font_size = 18
+custom_minimum_size = Vector2(0, 72)
+theme_override_font_sizes/font_size = 27
 text = "Begin Jump 1"

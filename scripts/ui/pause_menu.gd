@@ -68,7 +68,7 @@ func _build_ui() -> void:
 	_overlay.add_child(center)
 
 	_panel = PanelContainer.new()
-	_panel.custom_minimum_size = Vector2(360, 0)
+	_panel.custom_minimum_size = Vector2(540, 0)
 	var style: StyleBoxFlat = StyleBoxFlat.new()
 	style.bg_color = PANEL_COLOR
 	style.corner_radius_top_left = 8
@@ -159,13 +159,42 @@ func _build_ui() -> void:
 	_debug_section.visible = false
 	_main_vbox.add_child(_debug_section)
 
+	# --- Economy Section ---
+	_add_debug_section_header("ECONOMY")
 	_add_debug_button("Add 500 Credits", _debug_add_credits)
-	_add_debug_button("Level Up", _debug_level_up)
-	_add_debug_button("Full Heal Ship", _debug_full_heal)
-	_add_debug_button("Reset Crew Fatigue", _debug_reset_fatigue)
-	_add_debug_button("Boost Crew Morale", _debug_boost_morale)
+	_add_debug_button("Add 2,000 Credits (Corvette)", _debug_add_2000)
+	_add_debug_button("Add 10,000 Credits (Frigate)", _debug_add_10000)
+	_add_debug_button("Show Economy Stats", _debug_economy_stats)
 	_add_debug_button("Add 30 Days Food", _debug_add_food)
+
+	# --- Ship Section ---
+	_add_debug_section_header("SHIP")
+	_add_debug_button("Full Heal Ship", _debug_full_heal)
+	_add_debug_button("Level Up", _debug_level_up)
+	_add_debug_button("Refuel Ship", _debug_refuel)
+
+	# --- Crew Section ---
+	_add_debug_section_header("CREW")
+	_add_debug_button("Reset Crew Fatigue", _debug_reset_fatigue)
+	_add_debug_button("Boost Crew Morale (+30)", _debug_boost_morale)
+	_add_debug_button("Max All Loyalty", _debug_max_loyalty)
+	_add_debug_button("Heal All Injuries", _debug_heal_injuries)
+	_add_debug_button("Cure All Diseases", _debug_cure_diseases)
+	_add_debug_button("Kill Random Crew", _debug_kill_random)
+
+	# --- Simulation Section ---
+	_add_debug_section_header("SIMULATION")
+	_add_debug_button("Advance 10 Ticks", _debug_advance_10)
+	_add_debug_button("Advance 30 Ticks", _debug_advance_30)
 	_add_debug_button("Force Decision Event", _debug_force_decision)
+	_add_debug_button("Force Retirement Check", _debug_force_retirement)
+
+	# --- Diagnostics Section ---
+	_add_debug_section_header("DIAGNOSTICS")
+	_add_debug_button("Dump Crew Stats", _debug_dump_crew)
+	_add_debug_button("Dump Economy Report", _debug_dump_economy)
+	_add_debug_button("Dump Relationship Matrix", _debug_dump_relationships)
+	_add_debug_button("Dump Legacy Entries", _debug_dump_legacies)
 
 
 # === OPEN / CLOSE ===
@@ -316,6 +345,193 @@ func _add_debug_button(label: String, callback: Callable) -> void:
 	btn.add_theme_font_size_override("font_size", 13)
 	btn.pressed.connect(callback)
 	_debug_section.add_child(btn)
+
+
+func _add_debug_section_header(title: String) -> void:
+	var lbl: Label = Label.new()
+	lbl.text = "— %s —" % title
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_color_override("font_color", ACCENT_COLOR)
+	_debug_section.add_child(lbl)
+
+
+func _debug_add_2000() -> void:
+	GameManager.add_credits(2000)
+	_show_feedback("+2,000 credits (now %d)" % GameManager.credits, SUCCESS_COLOR)
+
+
+func _debug_add_10000() -> void:
+	GameManager.add_credits(10000)
+	_show_feedback("+10,000 credits (now %d)" % GameManager.credits, SUCCESS_COLOR)
+
+
+func _debug_economy_stats() -> void:
+	var earned: int = GameManager.total_credits_earned
+	var spent: int = GameManager.total_credits_spent
+	var current: int = GameManager.credits
+	var days: int = GameManager.day_count
+	var daily_rate: String = "%.1f" % (float(spent) / maxf(1.0, float(days)))
+	var msg: String = "Credits: %d | Earned: %d | Spent: %d | Burn: %s/day" % [current, earned, spent, daily_rate]
+	_show_feedback(msg, ACCENT_COLOR)
+	print("[DEBUG] Economy: current=%d, earned=%d, spent=%d, days=%d, burn_rate=%s/day" % [current, earned, spent, days, daily_rate])
+
+
+func _debug_refuel() -> void:
+	GameManager.fuel_current = GameManager.fuel_max
+	if GameManager.current_ship_id >= 0:
+		DatabaseManager.update_ship(GameManager.current_ship_id, {"fuel_current": GameManager.fuel_max})
+	EventBus.fuel_changed.emit(GameManager.fuel_current, GameManager.fuel_max)
+	_show_feedback("Fuel refilled (%.0f/%.0f)." % [GameManager.fuel_current, GameManager.fuel_max], SUCCESS_COLOR)
+
+
+func _debug_max_loyalty() -> void:
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	if roster.is_empty():
+		_show_feedback("No crew.", WARN_COLOR)
+		return
+	for cm: CrewMember in roster:
+		DatabaseManager.update_crew_member(cm.id, {"loyalty": 100.0})
+	EventBus.crew_changed.emit()
+	_show_feedback("All crew loyalty set to 100.", SUCCESS_COLOR)
+
+
+func _debug_heal_injuries() -> void:
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	var healed: int = 0
+	for cm: CrewMember in roster:
+		if cm.has_injuries():
+			DatabaseManager.update_crew_member(cm.id, {"injuries": "[]"})
+			healed += 1
+	if healed == 0:
+		_show_feedback("No injuries to heal.", WARN_COLOR)
+	else:
+		EventBus.crew_changed.emit()
+		_show_feedback("%d crew healed." % healed, SUCCESS_COLOR)
+
+
+func _debug_cure_diseases() -> void:
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	var cured: int = 0
+	for cm: CrewMember in roster:
+		if cm.has_diseases():
+			DatabaseManager.update_crew_member(cm.id, {
+				"diseases": "[]",
+				"is_quarantined": 0,
+				"quarantine_ticks": 0,
+			})
+			cured += 1
+	if cured == 0:
+		_show_feedback("No diseases to cure.", WARN_COLOR)
+	else:
+		EventBus.crew_changed.emit()
+		_show_feedback("%d crew cured." % cured, SUCCESS_COLOR)
+
+
+func _debug_kill_random() -> void:
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	if roster.is_empty():
+		_show_feedback("No crew to kill.", WARN_COLOR)
+		return
+	var victim: CrewMember = roster[randi() % roster.size()]
+	var death_events: Array[String] = CrewSimulation.process_crew_death(victim, "debug", roster)
+	_show_feedback("%s has died (debug)." % victim.crew_name, DANGER_COLOR)
+	for evt: String in death_events:
+		print("[DEBUG] Death event: %s" % evt)
+	_close()
+
+
+func _debug_advance_10() -> void:
+	_debug_advance_ticks(10)
+
+
+func _debug_advance_30() -> void:
+	_debug_advance_ticks(30)
+
+
+func _debug_advance_ticks(count: int) -> void:
+	_show_feedback("Advancing %d ticks..." % count, ACCENT_COLOR)
+	for i: int in range(count):
+		GameManager.day_count += 1
+		var result: Dictionary = CrewSimulation.tick_jump(false, false, 0, [])
+		var events: Array = result.get("events", [])
+		for evt: String in events:
+			print("[DEBUG] Tick %d: %s" % [i + 1, evt])
+	GameManager.save_game()
+	EventBus.crew_changed.emit()
+	_show_feedback("Advanced %d ticks. Day: %d." % [count, GameManager.day_count], SUCCESS_COLOR)
+
+
+func _debug_force_retirement() -> void:
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	if roster.is_empty():
+		_show_feedback("No crew.", WARN_COLOR)
+		return
+	var events: Array[String] = CrewSimulation.check_retirement(roster)
+	if events.is_empty():
+		_show_feedback("No crew eligible for retirement (need loyalty>80, 80+ ticks, morale>60).", WARN_COLOR)
+	else:
+		_show_feedback("Retirement check fired.", SUCCESS_COLOR)
+		_close()
+
+
+func _debug_dump_crew() -> void:
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	if roster.is_empty():
+		_show_feedback("No crew.", WARN_COLOR)
+		return
+	print("=== CREW STATS DUMP ===")
+	for cm: CrewMember in roster:
+		print("%s [%s %s] STA:%d COG:%d REF:%d SOC:%d RES:%d | Morale:%.0f Fat:%.0f Loy:%.0f | Traits:%s" % [
+			cm.crew_name, cm.get_species_name(), cm.get_role_name(),
+			cm.stamina, cm.cognition, cm.reflexes, cm.social, cm.resourcefulness,
+			cm.morale, cm.fatigue, cm.loyalty, str(cm.traits)])
+	print("======================")
+	_show_feedback("Crew stats dumped to console (%d crew)." % roster.size(), SUCCESS_COLOR)
+
+
+func _debug_dump_economy() -> void:
+	print("=== ECONOMY REPORT ===")
+	print("Day: %d | Credits: %d" % [GameManager.day_count, GameManager.credits])
+	print("Lifetime earned: %d | Lifetime spent: %d" % [GameManager.total_credits_earned, GameManager.total_credits_spent])
+	print("Ship class: %s | Hull: %d/%d | Fuel: %.0f/%.0f" % [
+		GameManager.ship_class, GameManager.hull_current, GameManager.hull_max,
+		GameManager.fuel_current, GameManager.fuel_max])
+	print("Food: %.0f | Crew: %d/%d" % [GameManager.food_supply, GameManager.get_crew_roster().size(), GameManager.crew_max])
+	print("Win triggered: %s" % str(GameManager.win_triggered))
+	print("======================")
+	_show_feedback("Economy report dumped to console.", SUCCESS_COLOR)
+
+
+func _debug_dump_relationships() -> void:
+	var rels: Array = DatabaseManager.get_all_crew_relationships(GameManager.save_id)
+	if rels.is_empty():
+		_show_feedback("No relationships.", WARN_COLOR)
+		return
+	print("=== RELATIONSHIP MATRIX ===")
+	for rel: Dictionary in rels:
+		var name_a: String = DatabaseManager.get_crew_member(rel.crew_a_id).get("name", "?")
+		var name_b: String = DatabaseManager.get_crew_member(rel.crew_b_id).get("name", "?")
+		var romantic: String = " [ROMANCE]" if rel.get("is_romantic", 0) == 1 else ""
+		print("%s <-> %s : %.1f%s" % [name_a, name_b, rel.value, romantic])
+	print("===========================")
+	_show_feedback("Relationship matrix dumped (%d pairs)." % rels.size(), SUCCESS_COLOR)
+
+
+func _debug_dump_legacies() -> void:
+	var legacies: Array = DatabaseManager.get_crew_legacies(GameManager.save_id)
+	if legacies.is_empty():
+		_show_feedback("No legacy entries.", WARN_COLOR)
+		return
+	print("=== LEGACY ENTRIES ===")
+	for leg: Dictionary in legacies:
+		print("[Day %d] %s (%s) — %s: %s | Effect: %s=%.1f (%s ticks)" % [
+			leg.get("day_departed", 0), leg.get("crew_name", "?"), leg.get("crew_role", "?"),
+			leg.get("departure_type", "?"), leg.get("legacy_text", ""),
+			leg.get("effect_type", "none"), leg.get("effect_value", 0.0),
+			str(leg.get("effect_ticks_remaining", -1))])
+	print("======================")
+	_show_feedback("Legacy entries dumped (%d entries)." % legacies.size(), SUCCESS_COLOR)
 
 
 func _show_feedback(text: String, color: Color) -> void:

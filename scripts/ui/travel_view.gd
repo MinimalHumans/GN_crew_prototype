@@ -210,8 +210,8 @@ func _show_encounter(encounter: Dictionary) -> void:
 		# Create button
 		var btn: Button = Button.new()
 		btn.text = "%d. %s" % [i + 1, label_text]
-		btn.custom_minimum_size = Vector2(0, 32)
-		btn.add_theme_font_size_override("font_size", 12)
+		btn.custom_minimum_size = Vector2(0, 48)
+		btn.add_theme_font_size_override("font_size", 18)
 		btn.pressed.connect(_on_approach_selected.bind(i))
 		_encounter_container.add_child(btn)
 
@@ -222,8 +222,8 @@ func _show_encounter(encounter: Dictionary) -> void:
 			info_lbl.text = "   %s" % info_text
 			info_lbl.fit_content = true
 			info_lbl.scroll_active = false
-			info_lbl.custom_minimum_size = Vector2(0, 18)
-			info_lbl.add_theme_font_size_override("normal_font_size", 10)
+			info_lbl.custom_minimum_size = Vector2(0, 27)
+			info_lbl.add_theme_font_size_override("normal_font_size", 15)
 			_encounter_container.add_child(info_lbl)
 
 	# Insert before continue button
@@ -343,15 +343,15 @@ func _show_rescue_offer() -> void:
 
 	var accept_btn: Button = Button.new()
 	accept_btn.text = "1. Take them aboard (free, no recruitment fee)"
-	accept_btn.custom_minimum_size = Vector2(0, 32)
-	accept_btn.add_theme_font_size_override("font_size", 12)
+	accept_btn.custom_minimum_size = Vector2(0, 48)
+	accept_btn.add_theme_font_size_override("font_size", 18)
 	accept_btn.pressed.connect(_on_rescue_accept)
 	_encounter_container.add_child(accept_btn)
 
 	var decline_btn: Button = Button.new()
 	decline_btn.text = "2. Patch them up and point them to the nearest station"
-	decline_btn.custom_minimum_size = Vector2(0, 32)
-	decline_btn.add_theme_font_size_override("font_size", 12)
+	decline_btn.custom_minimum_size = Vector2(0, 48)
+	decline_btn.add_theme_font_size_override("font_size", 18)
 	decline_btn.pressed.connect(_on_rescue_decline)
 	_encounter_container.add_child(decline_btn)
 
@@ -414,15 +414,15 @@ func _show_decision_event(event_data: Dictionary) -> void:
 		var option: Dictionary = options[i]
 		var btn: Button = Button.new()
 		btn.text = "%d. %s" % [i + 1, option.label]
-		btn.custom_minimum_size = Vector2(0, 32)
-		btn.add_theme_font_size_override("font_size", 12)
+		btn.custom_minimum_size = Vector2(0, 48)
+		btn.add_theme_font_size_override("font_size", 18)
 		btn.pressed.connect(_on_decision_choice.bind(i))
 		_decision_container.add_child(btn)
 
 		if option.has("hint"):
 			var hint: Label = Label.new()
 			hint.text = "   %s" % option.hint
-			hint.add_theme_font_size_override("font_size", 10)
+			hint.add_theme_font_size_override("font_size", 15)
 			hint.add_theme_color_override("font_color", Color("#718096"))
 			_decision_container.add_child(hint)
 

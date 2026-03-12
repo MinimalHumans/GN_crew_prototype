@@ -72,6 +72,9 @@ var grief_state: String = ""  # "", GRIEVING, RESOLVED, BROKEN
 var grief_ticks_remaining: int = 0
 var stat_bonus_all: int = 0  # Permanent all-stat modifier (positive or negative)
 
+# Phase 6: Hospital checkup
+var checkup_bonus_ticks: int = 0  # Ticks remaining of +5 fatigue recovery bonus
+
 
 # === SPECIES / ROLE DISPLAY ===
 
@@ -330,6 +333,11 @@ func get_experience_multiplier() -> float:
 	if role_experience > 200.0:
 		veteran_bonus = clampf((role_experience - 200.0) / 500.0, 0.0, 0.10)
 	return base_mult + veteran_bonus
+
+
+func get_stat_total() -> int:
+	## Returns the sum of all 5 base stats.
+	return stamina + cognition + reflexes + social + resourcefulness
 
 
 func get_effective_stat(stat_name: String) -> float:
@@ -821,6 +829,7 @@ static func from_dict(data: Dictionary) -> CrewMember:
 	cm.grief_state = data.get("grief_state", "")
 	cm.grief_ticks_remaining = data.get("grief_ticks_remaining", 0)
 	cm.stat_bonus_all = data.get("stat_bonus_all", 0)
+	cm.checkup_bonus_ticks = data.get("checkup_bonus_ticks", 0)
 	# Parse JSON fields
 	var injuries_str: String = data.get("injuries", "[]")
 	if injuries_str != "" and injuries_str != "[]":
@@ -895,6 +904,7 @@ func to_dict() -> Dictionary:
 		"grief_state": grief_state,
 		"grief_ticks_remaining": grief_ticks_remaining,
 		"stat_bonus_all": stat_bonus_all,
+		"checkup_bonus_ticks": checkup_bonus_ticks,
 	}
 
 

@@ -32,7 +32,7 @@ func _build_ui() -> void:
 	var header: HBoxContainer = HBoxContainer.new()
 	var back_btn: Button = Button.new()
 	back_btn.text = "< Back"
-	back_btn.custom_minimum_size = Vector2(80, 32)
+	back_btn.custom_minimum_size = Vector2(120, 48)
 	back_btn.pressed.connect(func() -> void: back_pressed.emit())
 	header.add_child(back_btn)
 
@@ -174,7 +174,7 @@ func _populate_crew_grid() -> void:
 
 func _make_crew_slot(cm: CrewMember) -> PanelContainer:
 	var card: PanelContainer = PanelContainer.new()
-	card.custom_minimum_size = Vector2(140, 60)
+	card.custom_minimum_size = Vector2(210, 90)
 
 	var vbox: VBoxContainer = VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 1)
@@ -217,8 +217,8 @@ func _make_crew_slot(cm: CrewMember) -> PanelContainer:
 	# Select button
 	var select_btn: Button = Button.new()
 	select_btn.text = "Profile"
-	select_btn.custom_minimum_size = Vector2(0, 24)
-	select_btn.add_theme_font_size_override("font_size", 10)
+	select_btn.custom_minimum_size = Vector2(0, 36)
+	select_btn.add_theme_font_size_override("font_size", 15)
 	select_btn.pressed.connect(_on_crew_selected.bind(cm))
 	vbox.add_child(select_btn)
 
@@ -228,7 +228,7 @@ func _make_crew_slot(cm: CrewMember) -> PanelContainer:
 
 func _make_empty_slot() -> PanelContainer:
 	var card: PanelContainer = PanelContainer.new()
-	card.custom_minimum_size = Vector2(140, 60)
+	card.custom_minimum_size = Vector2(210, 90)
 
 	var vbox: VBoxContainer = VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 2)
@@ -389,7 +389,7 @@ func _show_crew_profile(cm: CrewMember) -> void:
 
 	var dismiss_btn: Button = Button.new()
 	dismiss_btn.text = "Dismiss Crew Member"
-	dismiss_btn.custom_minimum_size = Vector2(160, 32)
+	dismiss_btn.custom_minimum_size = Vector2(240, 48)
 	dismiss_btn.add_theme_font_size_override("font_size", 12)
 	dismiss_btn.pressed.connect(_on_dismiss_pressed.bind(cm))
 	dismiss_row.add_child(dismiss_btn)
@@ -420,7 +420,7 @@ func _make_full_stat_bars(cm: CrewMember) -> VBoxContainer:
 		var label: Label = Label.new()
 		label.text = stat[0]
 		label.add_theme_font_size_override("font_size", 11)
-		label.custom_minimum_size = Vector2(100, 0)
+		label.custom_minimum_size = Vector2(150, 0)
 
 		# Highlight primary stat
 		var stat_key: String = stat[0].to_lower()
@@ -436,13 +436,13 @@ func _make_full_stat_bars(cm: CrewMember) -> VBoxContainer:
 		bar.max_value = 100
 		bar.value = stat[1]
 		bar.show_percentage = false
-		bar.custom_minimum_size = Vector2(80, 14)
+		bar.custom_minimum_size = Vector2(120, 21)
 		row.add_child(bar)
 
 		var val_lbl: Label = Label.new()
 		val_lbl.text = "%d (eff: %.0f)" % [stat[1], stat[2]]
 		val_lbl.add_theme_font_size_override("font_size", 10)
-		val_lbl.custom_minimum_size = Vector2(80, 0)
+		val_lbl.custom_minimum_size = Vector2(120, 0)
 		row.add_child(val_lbl)
 
 		container.add_child(row)
@@ -469,7 +469,7 @@ func _make_condition_bars(cm: CrewMember) -> HBoxContainer:
 	morale_bar.max_value = 100
 	morale_bar.value = cm.morale
 	morale_bar.show_percentage = false
-	morale_bar.custom_minimum_size = Vector2(60, 12)
+	morale_bar.custom_minimum_size = Vector2(90, 18)
 	morale_box.add_child(morale_bar)
 
 	var morale_val: Label = Label.new()
@@ -494,7 +494,7 @@ func _make_condition_bars(cm: CrewMember) -> HBoxContainer:
 	fatigue_bar.max_value = 100
 	fatigue_bar.value = cm.fatigue
 	fatigue_bar.show_percentage = false
-	fatigue_bar.custom_minimum_size = Vector2(60, 12)
+	fatigue_bar.custom_minimum_size = Vector2(90, 18)
 	fatigue_box.add_child(fatigue_bar)
 
 	var fatigue_val: Label = Label.new()
@@ -677,7 +677,7 @@ func _add_memory_section(cm: CrewMember) -> void:
 		tag_lbl.text = "[%s]" % tag_name
 		tag_lbl.add_theme_font_size_override("font_size", 10)
 		tag_lbl.add_theme_color_override("font_color", Color(tag_color))
-		tag_lbl.custom_minimum_size = Vector2(75, 0)
+		tag_lbl.custom_minimum_size = Vector2(113, 0)
 		mem_row.add_child(tag_lbl)
 
 		# Trigger text (muted)
@@ -898,14 +898,14 @@ func _on_dismiss_pressed(cm: CrewMember) -> void:
 
 	var confirm_btn: Button = Button.new()
 	confirm_btn.text = "Confirm Dismiss"
-	confirm_btn.custom_minimum_size = Vector2(130, 32)
+	confirm_btn.custom_minimum_size = Vector2(195, 48)
 	confirm_btn.add_theme_font_size_override("font_size", 12)
 	confirm_btn.pressed.connect(_confirm_dismiss.bind(cm))
 	btn_row.add_child(confirm_btn)
 
 	var cancel_btn: Button = Button.new()
 	cancel_btn.text = "Cancel"
-	cancel_btn.custom_minimum_size = Vector2(80, 32)
+	cancel_btn.custom_minimum_size = Vector2(120, 48)
 	cancel_btn.add_theme_font_size_override("font_size", 12)
 	cancel_btn.pressed.connect(_show_crew_profile.bind(cm))
 	btn_row.add_child(cancel_btn)

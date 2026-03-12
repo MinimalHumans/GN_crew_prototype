@@ -89,6 +89,9 @@ signal crew_died(crew_id: int, crew_name: String, cause: String)
 signal legacy_created(crew_name: String, departure_type: String)
 signal grief_resolved(crew_id: int, crew_name: String, outcome: String)
 
+# === WIN STATE (Phase 6) ===
+signal win_condition_reached(total_earned: int)
+
 # === UI ===
 signal message_logged(text: String, color: Color)
 signal scene_change_requested(scene_path: String)

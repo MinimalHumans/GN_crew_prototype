@@ -53,8 +53,8 @@ func _create_planet_button(planet: Dictionary, visited_ids: Array[int]) -> void:
 
 	var btn: Button = Button.new()
 	btn.text = planet.name
-	btn.custom_minimum_size = Vector2(110, 30)
-	btn.add_theme_font_size_override("font_size", 12)
+	btn.custom_minimum_size = Vector2(165, 45)
+	btn.add_theme_font_size_override("font_size", 18)
 
 	# Color and state
 	var is_current: bool = (planet_id == GameManager.current_planet_id)

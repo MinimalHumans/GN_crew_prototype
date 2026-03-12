@@ -10,61 +10,73 @@ const ARRIVAL_TEXT: Dictionary = {
 		"You dock at Haven. The station hums with commerce and the smell of cheap coffee.",
 		"Haven's docking clamps lock on. The familiar bustle of the Commonwealth hub greets you.",
 		"Home port. Haven's lights spread out below as your ship settles into bay {bay}.",
+		"The dockmaster waves you through with barely a glance. Haven knows your transponder by now.",
 	],
 	"Meridian": [
 		"Meridian's crossroads station buzzes with traffic from three zones. Everyone's going somewhere.",
 		"You slot into Meridian's crowded docking ring. Trade vessels from every faction jostle for position.",
 		"The Meridian beacon pings your transponder. Commonwealth and Hexarchy flags fly side by side here.",
+		"Meridian never sleeps. Cargo drones weave between ships as you find your assigned berth.",
 	],
 	"Fallow": [
 		"Fallow smells like grain and engine grease. A quiet world with cheap provisions.",
 		"You set down at Fallow. Fields stretch to the horizon under pale skies. Simple and cheap.",
 		"Fallow's small port has more cargo haulers than passenger ships. Food country.",
+		"The air at Fallow tastes clean. A welcome change from recycled ship atmosphere.",
 	],
 	"Korrath Prime": [
 		"Korrath Prime's orbital docks are immaculate. Gorvian efficiency at its finest.",
 		"The Hexarchy capital gleams with ordered precision. Your hull looks shabby by comparison.",
 		"Korrath Prime. The dockmaster inspects your ship with clinical Gorvian thoroughness.",
+		"Everything at Korrath Prime runs on schedule. Your docking window is exactly forty seconds.",
 	],
 	"Dvarn": [
 		"Dvarn's cold hits you through the hull. Mining rigs dot the frozen landscape below.",
 		"You dock at Dvarn. Ice crystals coat the viewports. The ore haulers here are massive.",
 		"The cold of Dvarn seeps into everything. Miners in heavy suits trudge past your berth.",
+		"Dvarn's landing pad crunches with frost. The ore refineries belch steam into the grey sky.",
 	],
 	"Sethi Orbital": [
 		"Sethi Orbital rotates slowly against the stars. A research station at the edge of Hexarchy space.",
 		"The orbital's sensors sweep your ship before you're cleared to dock. Science types are cautious.",
 		"Sethi Orbital hums with instrument readings. Researchers hurry between labs.",
+		"A strange energy reading pulses from Sethi's lower decks. The scientists don't seem concerned.",
 	],
 	"Lirien": [
 		"Lirien's port is alive with color and conversation. Vellani hospitality at its warmest.",
 		"You dock at Lirien. Music drifts from somewhere. The air smells like spiced tea and flowers.",
 		"Lirien welcomes you. The Vellani homeworld is the best place to find crew in the sector.",
+		"Children wave from the observation deck as you dock. Lirien still believes in strangers.",
 	],
 	"Tessara": [
 		"Tessara's docks are decorated with murals and hanging textiles. Culture is the export here.",
 		"Art and commerce blend seamlessly at Tessara. Even the dockworkers move with grace.",
 		"You set down on Tessara. A Vellani artisan is selling hand-painted hull decals at the next berth.",
+		"Tessara's markets overflow with luxuries. Silk, spice, and song at every turn.",
 	],
 	"Windhollow": [
 		"Windhollow is barely a settlement. A frontier outpost where the maps start getting vague.",
 		"You dock at Windhollow. The wind howls across the landing pad. Not much here but cheap fuel and big sky.",
 		"Windhollow. The frontier. Beyond here, the routes get interesting.",
+		"A lone survey ship shares the landing field. Its pilot nods but doesn't speak.",
 	],
 	"Ironmaw": [
 		"Ironmaw's docks are built for warships. The Krellvani stronghold radiates menace.",
 		"You dock at Ironmaw. Weapons dealers outnumber food vendors three to one.",
 		"Ironmaw. Even the station smells like gunmetal. The Krellvani eye your ship appraisingly.",
+		"Heavy turrets track your approach. Ironmaw doesn't trust anyone until they've docked.",
 	],
 	"Char": [
 		"Char has no real port — just a bombed-out landing field. Contested space at its worst.",
 		"You set down on Char and hope your ship is still here when you get back.",
 		"Char. The most dangerous rock in the sector. The pay is good if you survive.",
+		"Scorch marks and debris litter Char's landing zone. Someone had a bad day recently.",
 	],
 	"Nexus Station": [
 		"Nexus Station operates outside every faction's rules. The prices here are anyone's guess.",
 		"You dock at Nexus Station. The black market hub of the Outer Reach. Watch your cargo.",
 		"Nexus Station. Neutral ground where anything can be bought if you don't ask too many questions.",
+		"The station's neon reflects off your hull. Nexus never pretends to be anything it isn't.",
 	],
 }
 
@@ -89,6 +101,17 @@ const TRAVEL_TEXT: Array[String] = [
 	"Jump complete. The ship settles into the new void with a low hum.",
 	"A distant nebula catches your eye between jumps. Beautiful and empty.",
 	"The drive harmonics sound good today. Clean transit.",
+	"Faint radiation echoes from a dead system nearby. You adjust course and move on.",
+	"The jump leaves a metallic taste. Old spacer superstition says that's good luck.",
+	"Between stars, the dark is absolute. Then the next system blooms ahead.",
+	"Your nav computer chirps a course correction. Barely noticeable, but it matters.",
+	"A ghost signal flickers on long-range — probably just stellar noise.",
+	"The ship creaks as gravity shifts between jump lanes. Routine, but never comfortable.",
+	"You pass through the remnants of an old shipping lane. Debris pings off the hull.",
+	"The transition is rough this time. Coffee spills. Instruments recover quickly.",
+	"A trade convoy passes on a parallel lane, lights blinking in sequence. You exchange no words.",
+	"The void between systems feels longer this jump. Just perception, says the nav log.",
+	"Your chronometer skips a beat during the jump. Recalibrates on the other side.",
 ]
 
 # === FACTION COLORS ===
@@ -144,7 +167,7 @@ const GORVIAN_NAMES: Array[String] = [
 ]
 
 const VELLANI_NAMES: Array[String] = [
-	"Lirien", "Tessari", "Kael", "Wynna", "Aelith", "Sorenn", "Mellira",
+	"Velindra", "Tessari", "Kael", "Wynna", "Aelith", "Sorenn", "Mellira",
 	"Faelinn", "Thyra", "Ioleth", "Caelen", "Nivari", "Ellisande", "Pyriel",
 	"Dael", "Miravel", "Solinne", "Kaethis", "Veradine", "Lyraeth",
 	"Tessiel", "Wynael", "Corael", "Isenne", "Aelora", "Quilleth",
@@ -152,7 +175,7 @@ const VELLANI_NAMES: Array[String] = [
 ]
 
 const KRELLVANI_NAMES: Array[String] = [
-	"Grenn", "Rask", "Drokk", "Char", "Brekk", "Vurr", "Kex", "Thull",
+	"Grenn", "Rask", "Drokk", "Charn", "Brekk", "Vurr", "Kex", "Thull",
 	"Mordak", "Skarn", "Tork", "Grunn", "Harsk", "Zull", "Brenn", "Dakk",
 	"Vorsk", "Gharn", "Rekk", "Sturm", "Bolg", "Krath", "Fenn", "Rull",
 	"Skoll", "Denn", "Vrax", "Torr", "Grist", "Krull",

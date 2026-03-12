@@ -3,7 +3,7 @@ extends Control
 ## Left panel: planet visual, player info, ship info.
 ## Right panel: service buttons (or shop/mission board sub-panels), message log.
 
-enum PanelMode { SERVICES, SHOP, MISSION_BOARD, SHIPYARD, RECRUITMENT, SHIP_VIEW }
+enum PanelMode { SERVICES, SHOP, MISSION_BOARD, SHIPYARD, RECRUITMENT, SHIP_VIEW, HOSPITAL }
 var current_panel: PanelMode = PanelMode.SERVICES
 var _pending_decision: Dictionary = {}
 var _decision_container: VBoxContainer = null
@@ -62,6 +62,7 @@ func _ready() -> void:
 	EventBus.xp_gained.connect(func(_a: int, _t: int) -> void: _update_player_info())
 	EventBus.crew_changed.connect(func() -> void: _update_ship_info())
 	EventBus.decision_event_fired.connect(_on_decision_event)
+	EventBus.win_condition_reached.connect(_on_win_condition)
 
 	_update_planet_display()
 	_update_player_info()
@@ -159,19 +160,19 @@ func _build_service_buttons() -> void:
 			continue
 		var btn: Button = Button.new()
 		btn.text = SERVICE_DISPLAY[service_key]
-		btn.custom_minimum_size = Vector2(0, 38)
+		btn.custom_minimum_size = Vector2(0, 57)
 		btn.pressed.connect(_on_service_pressed.bind(service_key))
 		service_container.add_child(btn)
 
 	# Depart button — always available
 	var spacer: Control = Control.new()
-	spacer.custom_minimum_size = Vector2(0, 8)
+	spacer.custom_minimum_size = Vector2(0, 12)
 	service_container.add_child(spacer)
 
 	var depart_btn: Button = Button.new()
 	depart_btn.text = "Depart"
-	depart_btn.custom_minimum_size = Vector2(0, 44)
-	depart_btn.add_theme_font_size_override("font_size", 18)
+	depart_btn.custom_minimum_size = Vector2(0, 66)
+	depart_btn.add_theme_font_size_override("font_size", 27)
 	depart_btn.pressed.connect(_on_depart_pressed)
 	service_container.add_child(depart_btn)
 
@@ -185,7 +186,7 @@ func _on_service_pressed(service_key: String) -> void:
 		"recruitment":
 			_show_recruitment()
 		"hospital":
-			_append_log("[color=#718096]Hospital — coming in Phase 5.3.[/color]")
+			_show_hospital()
 		"shipyard":
 			_show_shipyard()
 		_:
@@ -245,6 +246,42 @@ func _show_recruitment() -> void:
 	recruitment.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	service_container.add_child(recruitment)
 	current_panel = PanelMode.RECRUITMENT
+
+
+func _show_hospital() -> void:
+	_clear_service_area()
+	service_header.text = "HOSPITAL"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var hospital: HospitalView = HospitalView.new(GameManager.current_planet_id)
+	hospital.back_pressed.connect(_show_services)
+	hospital.log_message.connect(_append_log)
+	hospital.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(hospital)
+	current_panel = PanelMode.HOSPITAL
+
+
+func _show_win_screen() -> void:
+	_clear_service_area()
+	service_header.text = "VICTORY"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var win: WinScreen = WinScreen.new()
+	win.back_pressed.connect(_show_services)
+	win.log_message.connect(_append_log)
+	win.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(win)
+
+
+func _on_win_condition(_total_earned: int) -> void:
+	_append_log("")
+	_append_log("[color=#FFD700]═══════════════════════════════════════[/color]")
+	_append_log("[color=#FFD700][b]VICTORY! You have earned 25,000 lifetime credits![/b][/color]")
+	_append_log("[color=#FFD700]Your name will echo through the shipping lanes.[/color]")
+	_append_log("[color=#FFD700]═══════════════════════════════════════[/color]")
+	_append_log("[color=#718096]View your full summary from the Ship View, or continue playing.[/color]")
+	# Auto-show the win screen
+	_show_win_screen()
 
 
 func _show_ship_view() -> void:
@@ -403,7 +440,11 @@ func _log_faction_access(planet: Dictionary) -> void:
 
 
 func _append_log(text: String) -> void:
-	message_log.append_text(text + "\n")
+	if text.strip_edges() == "" or text.begins_with("[color=#FFD700]═"):
+		message_log.append_text(text + "\n")
+		return
+	var day_prefix: String = "[color=#718096][Day %d][/color] " % GameManager.day_count
+	message_log.append_text(day_prefix + text + "\n")
 
 
 # === BOTTOM BAR ===
