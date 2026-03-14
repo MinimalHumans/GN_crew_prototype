@@ -10,7 +10,8 @@
       "Bash(grep -r \"injury\\\\|disease\\\\|health\\\\|illness\" D:06_GitHubGodotGN_crew_prototype --include=*.gd)",
       "Bash(python -c \":*)",
       "Bash(powershell -Command \"\\(Select-String -Path ''D:\\\\06_GitHub\\\\Godot\\\\GN_crew_prototype\\\\scripts\\\\data\\\\text_templates.gd'' -Pattern ''TRAVEL_TEXT'' -Context 0,50\\).Context.PostContext | Select-String ''^\\\\s+\\\\x22'' | Measure-Object | Select-Object -ExpandProperty Count\")",
-      "Bash(powershell -Command \"\\(Select-String -Path ''D:\\\\06_GitHub\\\\Godot\\\\GN_crew_prototype\\\\scripts\\\\data\\\\crew_event_templates.gd'' -Pattern ''SLICE_OF_LIFE'' -Context 0,50\\).Context.PostContext | Select-String ''^\\\\s+\\\\x22'' | Measure-Object | Select-Object -ExpandProperty Count\")"
+      "Bash(powershell -Command \"\\(Select-String -Path ''D:\\\\06_GitHub\\\\Godot\\\\GN_crew_prototype\\\\scripts\\\\data\\\\crew_event_templates.gd'' -Pattern ''SLICE_OF_LIFE'' -Context 0,50\\).Context.PostContext | Select-String ''^\\\\s+\\\\x22'' | Measure-Object | Select-Object -ExpandProperty Count\")",
+      "Bash(python build_flavor_db.py)"
     ]
   }
 }

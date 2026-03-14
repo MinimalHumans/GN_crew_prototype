@@ -109,13 +109,13 @@ static func _pick_role(species_key: String) -> String:
 
 
 static func _pick_unique_name(species_key: String, used_names: Array[String]) -> String:
-	var pool: Array = TextTemplates.CREW_NAME_POOLS.get(species_key, TextTemplates.HUMAN_NAMES)
-	# Try up to 20 times to find an unused name
+	var pool: Array[String] = FlavorDB.get_all("names_" + species_key.to_lower())
+	if pool.is_empty():
+		pool = ["Crewmember"]
 	for attempt: int in range(20):
 		var name: String = pool[randi() % pool.size()]
 		if name not in used_names:
 			return name
-	# Fallback: append a number
 	var base: String = pool[randi() % pool.size()]
 	return "%s-%d" % [base, randi_range(1, 99)]
 

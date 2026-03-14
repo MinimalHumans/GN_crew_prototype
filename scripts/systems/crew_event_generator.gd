@@ -67,7 +67,7 @@ static func _generate_background_events(roster: Array[CrewMember]) -> Array[Stri
 	# Food low event
 	var food_days: float = _get_food_days_remaining()
 	if food_days <= 1.0 and food_days >= 0.0:
-		events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates._pick(CrewEventTemplates.FOOD_LOW))
+		events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates.get_food_low_text())
 
 	# Random slice-of-life (8% chance per tick — increased in Phase 6 with expanded text pool)
 	if roster.size() >= 2 and randf() < 0.08:

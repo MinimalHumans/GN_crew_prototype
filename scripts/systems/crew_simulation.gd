@@ -409,7 +409,7 @@ static func tick_planet_arrival() -> Array[String]:
 		# Phase 5.2: Loyalty departure — crew with loyalty 0 leaves at port
 		if cm.loyalty <= 0.0 and cm.loyalty_departure_stage >= 3:
 			events.append("[color=#C0392B][b]%s has left the crew.[/b] %s[/color]" % [cm.crew_name,
-				CrewEventTemplates._pick(CrewEventTemplates.LOYALTY_DEPARTURE).replace("{name}", cm.crew_name)])
+				CrewEventTemplates.get_loyalty_departure_text(cm.crew_name)])
 			var legacy_events: Array[String] = GameManager.dismiss_crew_with_legacy(cm.id, "voluntary")
 			events.append_array(legacy_events)
 			EventBus.crew_departed.emit(cm.id, cm.crew_name)
@@ -1215,8 +1215,7 @@ static func _process_breakup(cm_a: CrewMember, cm_b: CrewMember, rom: Dictionary
 			DatabaseManager.update_relationship(cm.id, cm_b.id, rel_to_b + 5.0)
 			DatabaseManager.update_relationship(cm.id, cm_a.id, rel_to_a - 5.0)
 
-	events.append("[color=#C0392B][b]Breakup:[/b] %s[/color]" % CrewEventTemplates._pick(
-		CrewEventTemplates.ROMANCE_BREAKUP).replace("{a}", cm_a.crew_name).replace("{b}", cm_b.crew_name))
+	events.append("[color=#C0392B][b]Breakup:[/b] %s[/color]" % CrewEventTemplates.get_romance_breakup_text(cm_a.crew_name, cm_b.crew_name))
 	EventBus.romance_ended.emit(cm_a.id, cm_b.id, "breakup")
 
 	return events
@@ -1237,8 +1236,7 @@ static func trigger_partner_injury_reaction(injured_cm: CrewMember, roster: Arra
 	partner.morale = maxf(0.0, partner.morale - 8.0)
 	DatabaseManager.update_crew_member(partner.id, {"morale": partner.morale})
 
-	var text: String = CrewEventTemplates._pick(CrewEventTemplates.ROMANCE_INJURY_CONCERN).replace(
-		"{a}", partner.crew_name).replace("{b}", injured_cm.crew_name)
+	var text: String = CrewEventTemplates.get_romance_injury_concern_text(partner.crew_name, injured_cm.crew_name)
 	events.append("[color=#E67E22]%s[/color]" % text)
 
 	return events
@@ -1289,12 +1287,10 @@ static func _process_loyalty_tick(roster: Array[CrewMember]) -> Array[String]:
 			DatabaseManager.update_crew_member(cm.id, {"loyalty_departure_stage": new_stage})
 
 			if new_stage == 1 and old_stage == 0:
-				events.append("[color=#E67E22]%s[/color]" % CrewEventTemplates._pick(
-					CrewEventTemplates.LOYALTY_WITHDRAWAL).replace("{name}", cm.crew_name))
+				events.append("[color=#E67E22]%s[/color]" % CrewEventTemplates.get_loyalty_withdrawal_text(cm.crew_name))
 				EventBus.loyalty_stage_changed.emit(cm.id, cm.crew_name, "withdrawal")
 			elif new_stage == 2 and old_stage < 2:
-				events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates._pick(
-					CrewEventTemplates.LOYALTY_VOCAL).replace("{name}", cm.crew_name))
+				events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates.get_loyalty_vocal_text(cm.crew_name))
 				EventBus.loyalty_stage_changed.emit(cm.id, cm.crew_name, "vocal")
 
 		# Stage 2: negative morale influence
@@ -2405,8 +2401,7 @@ static func process_crew_death(cm: CrewMember, cause: String,
 	DatabaseManager.delete_crew_relationships(cm.id)
 
 	EventBus.crew_died.emit(cm.id, cm.crew_name, cause)
-	events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates._pick(
-		CrewEventTemplates.MOURNING_CREW).replace("{name}", cm.crew_name))
+	events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates.get_mourning_crew_text(cm.crew_name))
 
 	return events
 
@@ -2440,8 +2435,7 @@ static func process_grief_ticks(roster: Array[CrewMember]) -> Array[String]:
 		if cm.grief_ticks_remaining > 0 and cm.grief_ticks_remaining % 5 == 0:
 			# Find deceased name from recent death memories
 			var deceased_name: String = _find_deceased_name(cm)
-			var grief_text: String = CrewEventTemplates._pick(
-				CrewEventTemplates.GRIEF_EVENTS).replace("{name}", cm.crew_name).replace("{deceased}", deceased_name)
+			var grief_text: String = CrewEventTemplates.get_grief_event_text(cm.crew_name, deceased_name)
 			events.append("[color=#718096]%s[/color]" % grief_text)
 
 		# No positive social events during grief (handled by checking grief_state in romance processing)
@@ -2468,8 +2462,7 @@ static func process_grief_ticks(roster: Array[CrewMember]) -> Array[String]:
 					"traits": JSON.stringify(cm.traits),
 					"stat_bonus_all": cm.stat_bonus_all,
 				})
-				var text: String = CrewEventTemplates.GRIEF_RESOLVED_TEXT.replace(
-					"{name}", cm.crew_name).replace("{deceased}", deceased_name)
+				var text: String = CrewEventTemplates.get_grief_resolved_text(cm.crew_name, deceased_name)
 				events.append("[color=#27AE60][b]Grief Resolved:[/b] %s[/color]" % text)
 				EventBus.grief_resolved.emit(cm.id, cm.crew_name, "resolved")
 				EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "resolved", "Resolved")
@@ -2485,8 +2478,7 @@ static func process_grief_ticks(roster: Array[CrewMember]) -> Array[String]:
 					"traits": JSON.stringify(cm.traits),
 					"stat_bonus_all": cm.stat_bonus_all,
 				})
-				var text: String = CrewEventTemplates.GRIEF_BROKEN_TEXT.replace(
-					"{name}", cm.crew_name).replace("{deceased}", deceased_name)
+				var text: String = CrewEventTemplates.get_grief_broken_text(cm.crew_name, deceased_name)
 				events.append("[color=#C0392B][b]Grief:[/b] %s[/color]" % text)
 				EventBus.grief_resolved.emit(cm.id, cm.crew_name, "broken")
 				EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "broken_spirit", "Broken")
@@ -2501,8 +2493,7 @@ static func process_grief_ticks(roster: Array[CrewMember]) -> Array[String]:
 			cm.grief_ticks_remaining -= 1
 			if cm.grief_ticks_remaining <= 0:
 				var deceased_name: String = _find_deceased_name(cm)
-				var request_text: String = CrewEventTemplates.GRIEF_BROKEN_REQUEST.replace(
-					"{name}", cm.crew_name).replace("{deceased}", deceased_name)
+				var request_text: String = CrewEventTemplates.get_grief_broken_request_text(cm.crew_name, deceased_name)
 				var event_data: Dictionary = {
 					"id": "grief_departure_%d" % cm.id,
 					"type": "grief_departure",

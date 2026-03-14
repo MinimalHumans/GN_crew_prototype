@@ -183,8 +183,9 @@ static func _build_description(mission_type: String, dest_name: String, difficul
 
 	# Build payload for types that have them
 	var payload: String = ""
-	if TextTemplates.MISSION_PAYLOADS.has(mission_type):
-		var payloads: Array = TextTemplates.MISSION_PAYLOADS[mission_type]
+	var payload_key: String = "mission_payload_" + mission_type
+	var payloads: Array[String] = FlavorDB.get_all(payload_key)
+	if not payloads.is_empty():
 		payload = " " + payloads[randi() % payloads.size()]
 
 	var line1: String = "%s%s %s." % [verb, payload, dest_name]
