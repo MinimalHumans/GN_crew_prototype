@@ -34,6 +34,13 @@ func _ready() -> void:
 func _generate_candidates() -> void:
 	## Faction access modifies candidate count and quality.
 	## Outsider: fewer candidates (-1). Insider: more (+1), better stats.
+	## Returns cached candidates if they exist for this planet.
+	if GameManager.cached_recruitment_planet_id == planet_id and not GameManager.cached_recruitment_candidates.is_empty():
+		candidates = []
+		for cm: CrewMember in GameManager.cached_recruitment_candidates:
+			candidates.append(cm)
+		return
+
 	var base_count: int = randi_range(3, 6)
 	var access: GameManager.AccessLevel = GameManager.get_faction_access_level(planet_id)
 	if access == GameManager.AccessLevel.OUTSIDER:
@@ -49,6 +56,12 @@ func _generate_candidates() -> void:
 			cm.reflexes = mini(cm.reflexes + 5, 100)
 			cm.social = mini(cm.social + 5, 100)
 			cm.resourcefulness = mini(cm.resourcefulness + 5, 100)
+
+	# Cache the generated candidates
+	GameManager.cached_recruitment_planet_id = planet_id
+	GameManager.cached_recruitment_candidates = []
+	for cm: CrewMember in candidates:
+		GameManager.cached_recruitment_candidates.append(cm)
 
 
 # === UI BUILDING ===
@@ -360,13 +373,15 @@ func _on_recruit(cm: CrewMember, index: int) -> void:
 			var text: String = TextTemplates.get_recruit_accept_text(cm.crew_name, cm.get_role_name())
 			log_message.emit("[color=%s]%s[/color]" % [COLOR_GOOD, text])
 			log_message.emit("[color=%s]-%d credits (recruitment fee)[/color]" % [COLOR_CREDITS, GameManager.RECRUITMENT_FEE])
-			# Remove from candidates list
+			# Remove from candidates list and cache
 			candidates.remove_at(index)
+			_sync_cache_from_candidates()
 		"reluctant":
 			var text: String = TextTemplates.get_recruit_reluctant_text(cm.crew_name)
 			log_message.emit("[color=%s]%s[/color]" % [COLOR_CREDITS, text])
 			log_message.emit("[color=%s]-%d credits (recruitment fee). Starting morale: 45.[/color]" % [COLOR_CREDITS, GameManager.RECRUITMENT_FEE])
 			candidates.remove_at(index)
+			_sync_cache_from_candidates()
 		"decline":
 			var text: String = TextTemplates.get_recruit_decline_text(cm.crew_name)
 			log_message.emit("[color=%s]%s[/color]" % [COLOR_MUTED, text])
@@ -375,3 +390,10 @@ func _on_recruit(cm: CrewMember, index: int) -> void:
 			log_message.emit("[color=%s]%s[/color]" % [COLOR_BAD, result.reason])
 
 	_populate_candidates()
+
+
+func _sync_cache_from_candidates() -> void:
+	## Updates the GameManager recruitment cache to match current candidates list.
+	GameManager.cached_recruitment_candidates = []
+	for cm: CrewMember in candidates:
+		GameManager.cached_recruitment_candidates.append(cm)

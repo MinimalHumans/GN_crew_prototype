@@ -96,6 +96,10 @@ var total_credits_earned: int = 0
 var total_credits_spent: int = 0
 var win_triggered: bool = false
 
+# Recruitment candidate cache — cleared on departure
+var cached_recruitment_candidates: Array = []  # Array of CrewMember
+var cached_recruitment_planet_id: int = -1
+
 # Phase 3 one-time log flags (reset per session)
 var gorvian_fuel_logged: bool = false
 var claustrophobia_logged: Dictionary = {}  # {crew_id: true}
@@ -400,6 +404,8 @@ func begin_travel(destination_id: int) -> void:
 func arrive_at_planet(planet_id: int) -> void:
 	## Called when travel is complete. Updates state and transitions to planet view.
 	current_planet_id = planet_id
+	cached_recruitment_candidates = []
+	cached_recruitment_planet_id = -1
 	DatabaseManager.mark_planet_visited(save_id, planet_id, day_count)
 	save_game()
 

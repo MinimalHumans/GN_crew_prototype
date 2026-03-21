@@ -355,9 +355,13 @@ static func tick_planet_arrival() -> Array[String]:
 				cm.comfort_food_ticks = 10
 				events.append("[color=#4CAF50]%s grins at the sight of proper %s food.[/color]" % [cm.crew_name, species_name])
 
+		# Track faction zones visited for Trusted by Faction trait
+		var planet_faction: String = planet.get("faction", "")
+		if planet_faction != "" and planet_faction not in cm.faction_zones_visited:
+			cm.faction_zones_visited.append(planet_faction)
+
 		# Phase 4.2: First faction homeworld visit memory
 		cm.load_memories()
-		var planet_faction: String = planet.get("faction", "")
 		if cm.get_species_name() == planet_faction:
 			# Check if this is the first visit to any planet of their faction
 			var has_homeworld_memory: bool = false
@@ -428,6 +432,7 @@ static func tick_planet_arrival() -> Array[String]:
 			"grief_ticks_remaining": cm.grief_ticks_remaining,
 			"stat_bonus_all": cm.stat_bonus_all,
 			"checkup_bonus_ticks": cm.checkup_bonus_ticks,
+			"faction_zones_visited": JSON.stringify(cm.faction_zones_visited),
 		})
 
 		# Log notable fatigue recovery
@@ -933,6 +938,20 @@ static func _check_trait_acquisition(cm: CrewMember, roster: Array[CrewMember]) 
 				hardened_combat += 1
 		if hardened_combat >= 3:
 			_award_trait(cm, "reckless", events)
+
+	# Trusted by Faction: 40+ days aboard, ship visited 3+ planets of their own faction zone
+	if not cm.has_trait("trusted_by_faction"):
+		var days_aboard: int = GameManager.day_count - cm.hired_day
+		if days_aboard >= 40:
+			var own_faction: String = cm.get_species_name()
+			var own_zone_visits: int = 0
+			var visited_ids: Array[int] = DatabaseManager.get_visited_planet_ids(GameManager.save_id)
+			for pid: int in visited_ids:
+				var p: Dictionary = DatabaseManager.get_planet(pid)
+				if p.get("faction", "") == own_faction:
+					own_zone_visits += 1
+			if own_zone_visits >= 3:
+				_award_trait(cm, "trusted_by_faction", events)
 
 	return events
 

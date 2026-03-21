@@ -368,8 +368,6 @@ func _on_level_up(new_level: int) -> void:
 
 
 func _on_depart_pressed() -> void:
-	# Clear available missions so they regenerate on next visit
-	DatabaseManager.clear_missions_available(GameManager.current_planet_id)
 	GameManager.save_game()
 	GameManager.change_scene("res://scenes/travel/node_map.tscn")
 

@@ -75,6 +75,9 @@ var stat_bonus_all: int = 0  # Permanent all-stat modifier (positive or negative
 # Phase 6: Hospital checkup
 var checkup_bonus_ticks: int = 0  # Ticks remaining of +5 fatigue recovery bonus
 
+# Faction zone tracking for Trusted by Faction trait
+var faction_zones_visited: Array = []  # Array of faction zone strings visited while aboard
+
 
 # === SPECIES / ROLE DISPLAY ===
 
@@ -830,6 +833,12 @@ static func from_dict(data: Dictionary) -> CrewMember:
 	cm.grief_ticks_remaining = data.get("grief_ticks_remaining", 0)
 	cm.stat_bonus_all = data.get("stat_bonus_all", 0)
 	cm.checkup_bonus_ticks = data.get("checkup_bonus_ticks", 0)
+	# Parse faction zones visited
+	var fzv_str: String = data.get("faction_zones_visited", "[]")
+	if fzv_str != "" and fzv_str != "[]":
+		var fzv_parsed: Variant = JSON.parse_string(fzv_str)
+		if fzv_parsed is Array:
+			cm.faction_zones_visited = fzv_parsed
 	# Parse JSON fields
 	var injuries_str: String = data.get("injuries", "[]")
 	if injuries_str != "" and injuries_str != "[]":
@@ -905,6 +914,7 @@ func to_dict() -> Dictionary:
 		"grief_ticks_remaining": grief_ticks_remaining,
 		"stat_bonus_all": stat_bonus_all,
 		"checkup_bonus_ticks": checkup_bonus_ticks,
+		"faction_zones_visited": JSON.stringify(faction_zones_visited),
 	}
 
 

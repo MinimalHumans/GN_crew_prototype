@@ -80,6 +80,12 @@ func _on_continue_pressed() -> void:
 
 	_current_jump += 1
 
+	# On first jump, clear the origin planet's mission board and recruitment cache
+	if _current_jump == 1:
+		DatabaseManager.clear_missions_available(GameManager.current_planet_id)
+		GameManager.cached_recruitment_candidates = []
+		GameManager.cached_recruitment_planet_id = -1
+
 	# Process the jump (fuel, food, day)
 	var result: Dictionary = GameManager.process_jump()
 	EventBus.travel_jump_completed.emit(_current_jump, _total_jumps)
@@ -104,6 +110,11 @@ func _on_continue_pressed() -> void:
 		_append_log("[color=#718096]  Food: -%.1f (%.1f remaining)[/color]" % [
 			result.food_used, GameManager.food_supply])
 	_append_log("[color=#718096]  Day %d[/color]" % GameManager.day_count)
+
+	# Check for fuel exhaustion after jump
+	if GameManager.fuel_current <= 0.0:
+		_handle_stranded()
+		return
 
 	# Random encounter check
 	var encounter_chance: float = GameManager.get_encounter_chance(_danger_level)
@@ -392,6 +403,138 @@ func _on_rescue_decline() -> void:
 	_rescue_survivor = null
 	continue_button.disabled = false
 	_finish_jump(true)
+
+
+# === STRANDED (FUEL EXHAUSTION) ===
+
+func _handle_stranded() -> void:
+	_journey_complete = false
+	continue_button.disabled = true
+
+	_append_log("")
+	_append_log("[color=#C0392B]═══════ STRANDED ═══════[/color]")
+	_append_log("[color=#C0392B]Fuel tanks are empty. The ship drifts in open space.[/color]")
+	_append_log("")
+
+	# Build emergency options
+	_encounter_container = VBoxContainer.new()
+	_encounter_container.add_theme_constant_override("separation", 4)
+
+	# Option 1: Jettison cargo for emergency fuel (if player has cargo)
+	var total_cargo: int = GameManager.get_total_cargo()
+	if total_cargo > 0:
+		var cargo_to_dump: int = mini(total_cargo, 5)
+		var sell_btn: Button = Button.new()
+		sell_btn.text = "1. Jettison cargo for emergency fuel (%d units cargo → %.0f fuel)" % [
+			cargo_to_dump, cargo_to_dump * 2.0]
+		sell_btn.custom_minimum_size = Vector2(0, 48)
+		sell_btn.add_theme_font_size_override("font_size", 18)
+		sell_btn.pressed.connect(_on_stranded_jettison)
+		_encounter_container.add_child(sell_btn)
+
+	# Option 2: Distress call (costs time — advances day by 3, small credits cost)
+	var distress_btn: Button = Button.new()
+	var distress_cost: int = 100
+	distress_btn.text = "2. Send distress call (costs %d credits, 3 days)" % distress_cost
+	distress_btn.custom_minimum_size = Vector2(0, 48)
+	distress_btn.add_theme_font_size_override("font_size", 18)
+	distress_btn.disabled = GameManager.credits < distress_cost
+	distress_btn.pressed.connect(_on_stranded_distress.bind(distress_cost))
+	_encounter_container.add_child(distress_btn)
+
+	# Option 3: Limp to nearest planet (abort travel, return to origin)
+	var limp_btn: Button = Button.new()
+	limp_btn.text = "3. Limp back to %s on reserve power (abort journey)" % _origin_name
+	limp_btn.custom_minimum_size = Vector2(0, 48)
+	limp_btn.add_theme_font_size_override("font_size", 18)
+	limp_btn.pressed.connect(_on_stranded_limp)
+	_encounter_container.add_child(limp_btn)
+
+	continue_button.get_parent().add_child(_encounter_container)
+	continue_button.get_parent().move_child(_encounter_container, continue_button.get_index())
+
+
+func _on_stranded_jettison() -> void:
+	if _encounter_container != null:
+		_encounter_container.queue_free()
+		_encounter_container = null
+
+	# Sell up to 5 units of the most plentiful cargo for 2 fuel each
+	var cargo: Array = DatabaseManager.get_cargo(GameManager.save_id)
+	var jettisoned: int = 0
+	for c: Dictionary in cargo:
+		if jettisoned >= 5:
+			break
+		var available: int = c.get("quantity", 0)
+		if available <= 0:
+			continue
+		var to_dump: int = mini(available, 5 - jettisoned)
+		DatabaseManager.update_cargo(GameManager.save_id, c.commodity_id, available - to_dump)
+		jettisoned += to_dump
+
+	var fuel_gained: float = float(jettisoned) * 2.0
+	GameManager.fuel_current = minf(GameManager.fuel_max, GameManager.fuel_current + fuel_gained)
+	DatabaseManager.update_ship(GameManager.current_ship_id, {"fuel_current": GameManager.fuel_current})
+	EventBus.fuel_changed.emit(GameManager.fuel_current, GameManager.fuel_max)
+
+	_append_log("[color=#E67E22]Jettisoned %d units of cargo. Recovered %.0f fuel.[/color]" % [jettisoned, fuel_gained])
+	_update_status()
+	continue_button.disabled = false
+	_check_journey_complete()
+
+
+func _on_stranded_distress(cost: int) -> void:
+	if _encounter_container != null:
+		_encounter_container.queue_free()
+		_encounter_container = null
+
+	GameManager.spend_credits(cost)
+	# Advance 3 days
+	for i: int in range(3):
+		GameManager.day_count += 1
+		EventBus.day_advanced.emit(GameManager.day_count)
+
+	# Rescue ship refuels enough for remaining jumps + 2 buffer
+	var jumps_remaining: int = _total_jumps - _current_jump
+	var fuel_needed: float = float(jumps_remaining + 2) * GameManager.get_fuel_cost_per_jump()
+	GameManager.fuel_current = minf(GameManager.fuel_max, GameManager.fuel_current + fuel_needed)
+	DatabaseManager.update_ship(GameManager.current_ship_id, {"fuel_current": GameManager.fuel_current})
+	EventBus.fuel_changed.emit(GameManager.fuel_current, GameManager.fuel_max)
+
+	_append_log("[color=#E67E22]A passing freighter answers your distress call. They charge %d credits and it costs you 3 days, but the tanks are topped off enough to continue.[/color]" % cost)
+
+	# Crew morale hit from the indignity
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	for cm: CrewMember in roster:
+		cm.morale = maxf(0.0, cm.morale - 5.0)
+		DatabaseManager.update_crew_member(cm.id, {"morale": cm.morale})
+	if not roster.is_empty():
+		_append_log("[color=#718096]The crew is shaken. Morale drops across the board.[/color]")
+
+	_update_status()
+	continue_button.disabled = false
+	_check_journey_complete()
+
+
+func _on_stranded_limp() -> void:
+	if _encounter_container != null:
+		_encounter_container.queue_free()
+		_encounter_container = null
+
+	_append_log("[color=#E67E22]You fire the reserve thrusters and limp back to %s. The journey is aborted.[/color]" % _origin_name)
+
+	# Give just enough fuel to not be stuck at zero
+	GameManager.fuel_current = 1.0
+	DatabaseManager.update_ship(GameManager.current_ship_id, {"fuel_current": GameManager.fuel_current})
+	EventBus.fuel_changed.emit(GameManager.fuel_current, GameManager.fuel_max)
+
+	# Advance 2 days for the limp
+	for i: int in range(2):
+		GameManager.day_count += 1
+		EventBus.day_advanced.emit(GameManager.day_count)
+
+	# Return to origin planet
+	GameManager.arrive_at_planet(GameManager.current_planet_id)
 
 
 # === DECISION EVENT DISPLAY ===

@@ -815,6 +815,7 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("save_state", "total_credits_earned", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "total_credits_spent", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "win_triggered", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "faction_zones_visited", "TEXT DEFAULT '[]'")
 	# Seed Phase 3 planet flags
 	_seed_phase3_planet_flags()
 	# Seed Phase 5.3 hospital flags
