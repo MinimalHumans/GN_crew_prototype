@@ -435,6 +435,7 @@ func _log_faction_access(planet: Dictionary) -> void:
 				var new_morale: float = maxf(0.0, cm.morale - 3.0)
 				DatabaseManager.update_crew_member(cm.id, {"morale": new_morale})
 				_append_log("[color=#E67E22]%s shivers in the cold. Gorvians don't handle freezing well.[/color]" % cm.crew_name)
+				_append_log("[color=#555B66]  ↳ Morale dropped.[/color]")
 
 
 func _append_log(text: String) -> void:

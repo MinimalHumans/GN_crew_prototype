@@ -296,6 +296,8 @@ func _on_approach_selected(approach_idx: int) -> void:
 		DatabaseManager.update_ship(GameManager.current_ship_id, {"hull_current": GameManager.hull_current})
 		EventBus.hull_changed.emit(GameManager.hull_current, GameManager.hull_max)
 		_append_log("[color=#C0392B]Hull damage: -%d HP[/color]" % hull_dmg)
+		if GameManager.hull_current < GameManager.hull_max / 2:
+			_append_log(CrewEventTemplates.get_service_suggestion("hull_damaged"))
 
 	_append_log("[color=#E67E22]═══════════════════════════════[/color]")
 

@@ -366,6 +366,7 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 				_apply_purpose(primary.crew)
 				_apply_morale_delta(primary.crew, 2.0)
 				events.append("[color=#27AE60]%s handled it brilliantly.[/color]" % primary.crew.crew_name)
+				events.append(CrewEventTemplates.format_mechanical_summary({"morale": 2.0}))
 				# Phase 4.2: Memory on critical success
 				CrewSimulation.create_challenge_memory(primary.crew, "critical_success",
 					primary.get("display_name", ""), encounter_type)
@@ -401,6 +402,7 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 				var morale_penalty: float = CrewSimulation.get_loyalty_morale_anchor(primary.crew, -3.0)
 				_apply_morale_delta(primary.crew, morale_penalty)
 				events.append("[color=#E67E22]%s is frustrated after the failed attempt.[/color]" % primary.crew.crew_name)
+				events.append(CrewEventTemplates.format_mechanical_summary({"morale": morale_penalty, "fatigue": 10.0}))
 				if randf() < 0.40:
 					var inj_result: Dictionary = CrewSimulation.inflict_structured_injury(
 						primary.crew, "MINOR", has_medic, medic_stat)
@@ -448,6 +450,7 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 				var sec_penalty: float = CrewSimulation.get_loyalty_morale_anchor(secondary.crew, -5.0)
 				_apply_morale_delta(secondary.crew, sec_penalty)
 				events.append("[color=#E67E22]%s took a heavy toll from the encounter.[/color]" % secondary.crew.crew_name)
+				events.append(CrewEventTemplates.format_mechanical_summary({"morale": sec_penalty, "fatigue": 10.0}))
 
 	# Phase 4.1: Apply pinch-hit experience
 	var pinch_data: Array = result.get("pinch_hit_data", [])
@@ -468,6 +471,10 @@ static func apply_crew_consequences(result: Dictionary, roster: Array[CrewMember
 			var death_events: Array[String] = CrewSimulation.check_combat_death(
 				primary.crew, difficulty, roster)
 			events.append_array(death_events)
+
+	# Suggest hospital when injuries occurred without a medic
+	if injured_count > 0 and not has_medic:
+		events.append(CrewEventTemplates.get_service_suggestion("injury_no_medic"))
 
 	# Phase 4.4: Check for catastrophic loss ship memory
 	if injured_count >= 2:

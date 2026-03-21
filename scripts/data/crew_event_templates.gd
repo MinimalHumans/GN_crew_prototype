@@ -43,6 +43,119 @@ static func get_decision_events() -> Dictionary:
 	}
 
 
+# === FORMATTING HELPERS ===
+
+static func format_mechanical_summary(changes: Dictionary) -> String:
+	## Generates a muted follow-up line summarizing mechanical changes.
+	## Returns empty string if no changes worth reporting.
+	var parts: Array[String] = []
+
+	if changes.has("morale"):
+		var val: float = changes.morale
+		if val > 0:
+			parts.append("Morale improved")
+		elif val < 0:
+			parts.append("Morale dropped")
+
+	if changes.has("fatigue"):
+		var val: float = changes.fatigue
+		if val > 0:
+			parts.append("Fatigue increased")
+		elif val < 0:
+			parts.append("Fatigue reduced")
+
+	if changes.has("loyalty"):
+		var val: float = changes.loyalty
+		if val > 0:
+			parts.append("Loyalty strengthened")
+		elif val < 0:
+			parts.append("Loyalty weakened")
+
+	if changes.has("relationship"):
+		var val: float = changes.relationship
+		if val > 0:
+			parts.append("Relationship improved")
+		elif val < 0:
+			parts.append("Relationship worsened")
+
+	if changes.has("xp"):
+		parts.append("+%d XP" % changes.xp)
+
+	if changes.has("credits"):
+		var val: int = changes.credits
+		if val > 0:
+			parts.append("+%d credits" % val)
+		elif val < 0:
+			parts.append("%d credits" % val)
+
+	if changes.has("hull"):
+		parts.append("Hull %+d" % changes.hull)
+
+	if changes.has("fuel"):
+		parts.append("Fuel %+.0f" % changes.fuel)
+
+	if changes.has("injury"):
+		parts.append(changes.injury)
+
+	if changes.has("disease"):
+		parts.append(changes.disease)
+
+	if changes.has("trait"):
+		parts.append("Trait acquired: %s" % changes.trait)
+
+	if changes.has("memory"):
+		parts.append("Formative memory")
+
+	if parts.is_empty():
+		return ""
+
+	return "[color=#555B66]  ↳ %s.[/color]" % ", ".join(parts)
+
+
+static func format_nudge(text: String) -> String:
+	## Formats an actionable nudge warning — something the player can respond to.
+	return "[color=#E67E22]⚠ %s[/color]" % text
+
+
+static func format_observation(text: String) -> String:
+	## Formats a neutral observation — atmospheric, no action needed.
+	return "[color=#718096]%s[/color]" % text
+
+
+static func format_positive(text: String) -> String:
+	## Formats a positive event.
+	return "[color=#27AE60]%s[/color]" % text
+
+
+static func format_negative(text: String) -> String:
+	## Formats a negative event.
+	return "[color=#C0392B]%s[/color]" % text
+
+
+# === SERVICE SUGGESTIONS ===
+
+static func get_service_suggestion(trigger_type: String) -> String:
+	## Returns a suggestion line for the given trigger, or empty string.
+	match trigger_type:
+		"fatigue_high":
+			return "[color=#555B66]  ↳ A port with hospital services could help with recovery.[/color]"
+		"morale_low":
+			return "[color=#555B66]  ↳ Shore leave at a developed port might lift spirits.[/color]"
+		"injury_no_medic":
+			return "[color=#555B66]  ↳ A hospital could treat the injury properly.[/color]"
+		"disease_active":
+			return "[color=#555B66]  ↳ A hospital planet could cure the disease.[/color]"
+		"purpose_bored":
+			return "[color=#555B66]  ↳ A mission using their skills would help.[/color]"
+		"food_low":
+			return "[color=#555B66]  ↳ Restock at the nearest shop.[/color]"
+		"hull_damaged":
+			return "[color=#555B66]  ↳ A shipyard or shop can handle repairs.[/color]"
+		"crew_conflict":
+			return "[color=#555B66]  ↳ Docking for shore leave might ease tensions.[/color]"
+	return ""
+
+
 # === HELPER FUNCTIONS ===
 
 static func _pick(pool: Array) -> String:

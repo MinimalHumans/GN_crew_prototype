@@ -5,6 +5,16 @@ class_name CrewSimulation
 ## skill progression, memory triggers, trait acquisition, and ship memories.
 
 
+# === EVENT HELPERS ===
+
+static func _append_with_summary(events: Array[String], event_text: String, changes: Dictionary) -> void:
+	## Appends an event line and an optional mechanical summary follow-up.
+	events.append(event_text)
+	var summary: String = CrewEventTemplates.format_mechanical_summary(changes)
+	if summary != "":
+		events.append(summary)
+
+
 # === MORALE NEED MODIFIERS ===
 
 static func _get_pay_modifier(pay_split: float) -> float:
@@ -165,13 +175,18 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		if cm.species == CrewMember.Species.KRELLVANI and GameManager.ship_class == "corvette":
 			cm.morale = maxf(0.0, cm.morale - 5.0)
 			if not GameManager.claustrophobia_logged.has(cm.id):
-				events.append("[color=#E67E22]%s is uncomfortable — Krellvani don't do well in tight quarters.[/color]" % cm.crew_name)
+				_append_with_summary(events,
+					"[color=#E67E22]%s is uncomfortable — Krellvani don't do well in tight quarters.[/color]" % cm.crew_name,
+					{"morale": -5.0})
 				GameManager.claustrophobia_logged[cm.id] = true
 
 		# --- Phase 4.3: Trait morale effects ---
 		# Haunted: periodic morale dip every 15 ticks
 		if cm.has_trait("haunted") and cm.total_jumps % 15 == 0:
 			cm.morale = maxf(0.0, cm.morale - 3.0)
+			_append_with_summary(events,
+				"[color=#718096]%s stares at nothing for a long moment, then shakes it off.[/color]" % cm.crew_name,
+				{"morale": -3.0})
 
 		# Spacer's Instinct: already handled via docked_ticks (see tick_planet_arrival)
 
@@ -285,6 +300,12 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		if cm_check.has_diseases() and not _has_medic_in_roster(roster):
 			var disease_death_events: Array[String] = check_disease_death(cm_check, roster)
 			events.append_array(disease_death_events)
+			# Suggest hospital if no medic and disease active (cooldown-gated)
+			if not GameManager.nudge_cooldowns.has("disease_suggestion"):
+				var disease_suggestion: String = CrewEventTemplates.get_service_suggestion("disease_active")
+				if disease_suggestion != "":
+					events.append(disease_suggestion)
+					GameManager.nudge_cooldowns["disease_suggestion"] = 10
 
 	# --- Phase 5.4: Crew-generated mission check ---
 	var crew_gen_events: Array[String] = check_crew_generated_mission(roster)
@@ -316,7 +337,9 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			if not crew_data.is_empty() and bool(crew_data.get("is_active", 0)):
 				var new_morale: float = maxf(0.0, crew_data.morale - 15.0)
 				DatabaseManager.update_crew_member(promise.crew_id, {"morale": new_morale})
-				events.append("[color=#C0392B]%s feels betrayed — you didn't dock as promised.[/color]" % crew_data.name)
+				_append_with_summary(events,
+					"[color=#C0392B]%s feels betrayed — you didn't dock as promised.[/color]" % crew_data.name,
+					{"morale": -15.0})
 
 	return {"events": events}
 
@@ -353,7 +376,9 @@ static func tick_planet_arrival() -> Array[String]:
 			var species_name: String = cm.get_species_name()
 			if planet.get("faction", "") == species_name:
 				cm.comfort_food_ticks = 10
-				events.append("[color=#4CAF50]%s grins at the sight of proper %s food.[/color]" % [cm.crew_name, species_name])
+				_append_with_summary(events,
+					"[color=#4CAF50]%s grins at the sight of proper %s food.[/color]" % [cm.crew_name, species_name],
+					{"morale": 4.0})
 
 		# Track faction zones visited for Trusted by Faction trait
 		var planet_faction: String = planet.get("faction", "")
@@ -378,7 +403,9 @@ static func tick_planet_arrival() -> Array[String]:
 					"context_match": "faction_homeworld_%s" % planet_faction.to_lower(),
 					"significance": 2.0,
 				})
-				events.append("[color=#4CAF50]%s is moved by the visit to %s. It feels like coming home.[/color]" % [cm.crew_name, planet.get("name", "unknown")])
+				_append_with_summary(events,
+					"[color=#4CAF50]%s is moved by the visit to %s. It feels like coming home.[/color]" % [cm.crew_name, planet.get("name", "unknown")],
+					{"memory": true})
 
 		# Phase 5.1: Shared rest bonus for couples
 		var partner_id: int = DatabaseManager.get_partner_id(cm.id)
@@ -467,7 +494,9 @@ static func tick_planet_arrival() -> Array[String]:
 			if not crew_data.is_empty() and bool(crew_data.get("is_active", 0)):
 				var new_morale: float = minf(100.0, crew_data.morale + 10.0)
 				DatabaseManager.update_crew_member(promise.crew_id, {"morale": new_morale})
-				events.append("[color=#27AE60]%s is grateful you kept your promise to dock.[/color]" % crew_data.name)
+				_append_with_summary(events,
+					"[color=#27AE60]%s is grateful you kept your promise to dock.[/color]" % crew_data.name,
+					{"morale": 10.0})
 		else:
 			remaining.append(promise)
 	GameManager.pending_promises = remaining
@@ -538,9 +567,13 @@ static func _process_relationships_tick(roster: Array[CrewMember], had_encounter
 
 				# Big shift events
 				if delta >= 5.0:
-					events.append("[color=#27AE60]%s and %s seem to be bonding.[/color]" % [cm_a.crew_name, cm_b.crew_name])
+					_append_with_summary(events,
+						"[color=#27AE60]%s and %s seem to be bonding.[/color]" % [cm_a.crew_name, cm_b.crew_name],
+						{"relationship": delta})
 				elif delta <= -5.0:
-					events.append("[color=#C0392B]%s and %s had a tense exchange.[/color]" % [cm_a.crew_name, cm_b.crew_name])
+					_append_with_summary(events,
+						"[color=#C0392B]%s and %s had a tense exchange.[/color]" % [cm_a.crew_name, cm_b.crew_name],
+						{"relationship": delta})
 
 				# Phase 3.3: Bonding breakthrough check
 				var breakthrough_event: String = _check_bonding_breakthrough(cm_a, cm_b, new_val)

@@ -21,10 +21,27 @@ static func generate_events(roster: Array[CrewMember]) -> Dictionary:
 
 	# --- Background events (capped at 2 per tick) ---
 	var bg_events: Array[String] = _generate_background_events(roster)
-	# Shuffle and cap
-	bg_events.shuffle()
-	for i: int in range(mini(bg_events.size(), 2)):
-		background.append(bg_events[i])
+	# Group events with their follow-up lines (↳ prefix) so shuffle doesn't separate them
+	var event_groups: Array[Array] = []
+	var current_group: Array[String] = []
+	for line: String in bg_events:
+		if line.find("↳") != -1 and not current_group.is_empty():
+			current_group.append(line)
+		else:
+			if not current_group.is_empty():
+				event_groups.append(current_group)
+			current_group = [line]
+	if not current_group.is_empty():
+		event_groups.append(current_group)
+	# Shuffle and cap groups
+	event_groups.shuffle()
+	var groups_added: int = 0
+	for group: Array in event_groups:
+		if groups_added >= 2:
+			break
+		for line: String in group:
+			background.append(line)
+		groups_added += 1
 
 	# --- Nudge events (with cooldown) ---
 	nudges = _generate_nudge_events(roster)
@@ -53,21 +70,26 @@ static func _generate_background_events(roster: Array[CrewMember]) -> Array[Stri
 		# Morale threshold crossings
 		if cm.morale >= 70.0 and old_morale < 70.0:
 			events.append("[color=#27AE60]%s[/color]" % CrewEventTemplates.get_morale_high_text(cm.crew_name))
+			events.append("[color=#555B66]  ↳ High morale is improving performance.[/color]")
 		elif cm.morale < 35.0 and old_morale >= 35.0:
 			events.append("[color=#E67E22]%s[/color]" % CrewEventTemplates.get_morale_low_text(cm.crew_name))
+			events.append("[color=#555B66]  ↳ Low morale is hurting performance.[/color]")
 
 		# Fatigue threshold crossings
 		if cm.fatigue > 75.0 and old_fatigue <= 75.0:
 			events.append("[color=#E67E22]%s[/color]" % CrewEventTemplates.get_fatigue_high_text(cm.crew_name))
+			events.append("[color=#555B66]  ↳ High fatigue is reducing effectiveness.[/color]")
+			events.append(CrewEventTemplates.get_service_suggestion("fatigue_high"))
 
 		# Purpose events
 		if cm.ticks_since_role_used >= 20 and cm.ticks_since_role_used % 10 == 0:
-			events.append("[color=#718096]%s[/color]" % CrewEventTemplates.get_purpose_bored_text(cm.crew_name))
+			events.append(CrewEventTemplates.format_observation(CrewEventTemplates.get_purpose_bored_text(cm.crew_name)))
+			events.append(CrewEventTemplates.get_service_suggestion("purpose_bored"))
 
 	# Food low event
 	var food_days: float = _get_food_days_remaining()
 	if food_days <= 1.0 and food_days >= 0.0:
-		events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates.get_food_low_text())
+		events.append(CrewEventTemplates.format_negative(CrewEventTemplates.get_food_low_text()))
 
 	# Random slice-of-life (8% chance per tick — increased in Phase 6 with expanded text pool)
 	if roster.size() >= 2 and randf() < 0.08:
@@ -75,7 +97,7 @@ static func _generate_background_events(roster: Array[CrewMember]) -> Array[Stri
 		var idx_b: int = (idx_a + 1 + randi() % (roster.size() - 1)) % roster.size()
 		var text: String = CrewEventTemplates.get_slice_of_life(
 			roster[idx_a].crew_name, roster[idx_b].crew_name)
-		events.append("[color=#718096]%s[/color]" % text)
+		events.append(CrewEventTemplates.format_observation(text))
 
 	# Phase 4.2: Memory-referenced dialogue (30% chance per crew member with memories)
 	for cm: CrewMember in roster:
@@ -87,7 +109,7 @@ static func _generate_background_events(roster: Array[CrewMember]) -> Array[Stri
 			var tag: String = mem.get("emotional_tag", "")
 			if tag != "":
 				var dialogue: String = CrewEventTemplates.get_memory_dialogue(cm.crew_name, tag)
-				events.append("[color=#718096]%s[/color]" % dialogue)
+				events.append(CrewEventTemplates.format_observation(dialogue))
 
 	return events
 
@@ -101,7 +123,8 @@ static func _generate_nudge_events(roster: Array[CrewMember]) -> Array[String]:
 	if _can_nudge("morale"):
 		var ship_morale: float = GameManager.get_ship_morale()
 		if ship_morale < 40.0:
-			nudges.append("[color=#E67E22]⚠ %s[/color]" % CrewEventTemplates.get_nudge_text("morale"))
+			nudges.append(CrewEventTemplates.format_nudge(CrewEventTemplates.get_nudge_text("morale")))
+			nudges.append(CrewEventTemplates.get_service_suggestion("morale_low"))
 			GameManager.nudge_cooldowns["morale"] = 10
 
 	# Relationship warning
@@ -110,8 +133,9 @@ static func _generate_nudge_events(roster: Array[CrewMember]) -> Array[String]:
 			for j: int in range(i + 1, roster.size()):
 				var val: float = DatabaseManager.get_relationship_value(roster[i].id, roster[j].id)
 				if val < -40.0:
-					nudges.append("[color=#E67E22]⚠ %s[/color]" % CrewEventTemplates.get_nudge_text(
-						"relationship", roster[i].crew_name, roster[j].crew_name))
+					nudges.append(CrewEventTemplates.format_nudge(CrewEventTemplates.get_nudge_text(
+						"relationship", roster[i].crew_name, roster[j].crew_name)))
+					nudges.append(CrewEventTemplates.get_service_suggestion("crew_conflict"))
 					GameManager.nudge_cooldowns["relationship"] = 10
 					break
 			if nudges.size() > 0:
@@ -120,7 +144,8 @@ static func _generate_nudge_events(roster: Array[CrewMember]) -> Array[String]:
 	# Food warning
 	if _can_nudge("food"):
 		if _get_food_days_remaining() < 3.0:
-			nudges.append("[color=#E67E22]⚠ %s[/color]" % CrewEventTemplates.get_nudge_text("food"))
+			nudges.append(CrewEventTemplates.format_nudge(CrewEventTemplates.get_nudge_text("food")))
+			nudges.append(CrewEventTemplates.get_service_suggestion("food_low"))
 			GameManager.nudge_cooldowns["food"] = 10
 
 	# Fatigue warning
@@ -130,7 +155,8 @@ static func _generate_nudge_events(roster: Array[CrewMember]) -> Array[String]:
 			avg_fatigue += cm.fatigue
 		avg_fatigue /= float(roster.size())
 		if avg_fatigue > 60.0:
-			nudges.append("[color=#E67E22]⚠ %s[/color]" % CrewEventTemplates.get_nudge_text("fatigue"))
+			nudges.append(CrewEventTemplates.format_nudge(CrewEventTemplates.get_nudge_text("fatigue")))
+			nudges.append(CrewEventTemplates.get_service_suggestion("fatigue_high"))
 			GameManager.nudge_cooldowns["fatigue"] = 10
 
 	# Pay warning
@@ -141,7 +167,7 @@ static func _generate_nudge_events(roster: Array[CrewMember]) -> Array[String]:
 				avg_morale += cm.morale
 			avg_morale /= float(roster.size())
 			if avg_morale < 50.0:
-				nudges.append("[color=#E67E22]⚠ %s[/color]" % CrewEventTemplates.get_nudge_text("pay"))
+				nudges.append(CrewEventTemplates.format_nudge(CrewEventTemplates.get_nudge_text("pay")))
 				GameManager.nudge_cooldowns["pay"] = 10
 
 	return nudges
