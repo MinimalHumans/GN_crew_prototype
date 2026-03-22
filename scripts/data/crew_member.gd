@@ -78,6 +78,12 @@ var checkup_bonus_ticks: int = 0  # Ticks remaining of +5 fatigue recovery bonus
 # Faction zone tracking for Trusted by Faction trait
 var faction_zones_visited: Array = []  # Array of faction zone strings visited while aboard
 
+# Phase 4 (Crew Economy): wallet and payout tracking
+var wallet: float = 0.0
+var lifetime_earnings: float = 0.0
+var low_earning_ticks: int = 0
+var prosperity_checked: bool = false
+
 
 # === SPECIES / ROLE DISPLAY ===
 
@@ -839,6 +845,11 @@ static func from_dict(data: Dictionary) -> CrewMember:
 		var fzv_parsed: Variant = JSON.parse_string(fzv_str)
 		if fzv_parsed is Array:
 			cm.faction_zones_visited = fzv_parsed
+	# Phase 4 (Crew Economy) fields
+	cm.wallet = data.get("wallet", 0.0)
+	cm.lifetime_earnings = data.get("lifetime_earnings", 0.0)
+	cm.low_earning_ticks = data.get("low_earning_ticks", 0)
+	cm.prosperity_checked = bool(data.get("prosperity_checked", 0))
 	# Parse JSON fields
 	var injuries_str: String = data.get("injuries", "[]")
 	if injuries_str != "" and injuries_str != "[]":
@@ -915,6 +926,10 @@ func to_dict() -> Dictionary:
 		"stat_bonus_all": stat_bonus_all,
 		"checkup_bonus_ticks": checkup_bonus_ticks,
 		"faction_zones_visited": JSON.stringify(faction_zones_visited),
+		"wallet": wallet,
+		"lifetime_earnings": lifetime_earnings,
+		"low_earning_ticks": low_earning_ticks,
+		"prosperity_checked": 1 if prosperity_checked else 0,
 	}
 
 

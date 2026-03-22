@@ -91,6 +91,10 @@ var last_crew_gen_mission_tick: int = 0
 var morale_floor: float = 0.0
 var combat_morale_resistance: float = 0.0
 
+# Phase 4 (Crew Economy): payout tracking (persisted in save_state)
+var last_payout_day: int = 0
+var credits_since_last_payout: int = 0
+
 # Phase 6: Economy tracking (persisted in save_state)
 var total_credits_earned: int = 0
 var total_credits_spent: int = 0
@@ -168,6 +172,8 @@ func _load_state_from_db() -> void:
 	last_crew_gen_mission_tick = save_data.get("last_crew_gen_mission_tick", 0)
 	morale_floor = save_data.get("morale_floor", 0.0)
 	combat_morale_resistance = save_data.get("combat_morale_resistance", 0.0)
+	last_payout_day = save_data.get("last_payout_day", 0)
+	credits_since_last_payout = save_data.get("credits_since_last_payout", 0)
 	total_credits_earned = save_data.get("total_credits_earned", 0)
 	total_credits_spent = save_data.get("total_credits_spent", 0)
 	win_triggered = bool(save_data.get("win_triggered", 0))
@@ -220,6 +226,8 @@ func save_game() -> void:
 		"last_crew_gen_mission_tick": last_crew_gen_mission_tick,
 		"morale_floor": morale_floor,
 		"combat_morale_resistance": combat_morale_resistance,
+		"last_payout_day": last_payout_day,
+		"credits_since_last_payout": credits_since_last_payout,
 		"total_credits_earned": total_credits_earned,
 		"total_credits_spent": total_credits_spent,
 		"win_triggered": 1 if win_triggered else 0,
@@ -248,6 +256,7 @@ func save_game() -> void:
 func add_credits(amount: int) -> void:
 	credits += amount
 	total_credits_earned += amount
+	credits_since_last_payout += amount
 	EventBus.credits_changed.emit(credits)
 	# Check win condition
 	if not win_triggered and total_credits_earned >= 25000:

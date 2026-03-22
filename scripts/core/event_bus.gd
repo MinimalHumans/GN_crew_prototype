@@ -89,6 +89,12 @@ signal crew_died(crew_id: int, crew_name: String, cause: String)
 signal legacy_created(crew_name: String, departure_type: String)
 signal grief_resolved(crew_id: int, crew_name: String, outcome: String)
 
+# === ECONOMY (Phase 4) ===
+signal payout_completed(total_crew_share: int, per_crew: int)
+signal payout_crisis(shortfall: int)
+signal prosperity_departure(crew_id: int, crew_name: String)
+signal underpaid_departure(crew_id: int, crew_name: String)
+
 # === WIN STATE (Phase 6) ===
 signal win_condition_reached(total_earned: int)
 

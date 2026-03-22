@@ -145,6 +145,20 @@ static func _generate_stats(cm: CrewMember, species_key: String, player_level: i
 	cm.social = clampi(cm.social + mods.get("social", 0), 0, 100)
 	cm.resourcefulness = clampi(cm.resourcefulness + mods.get("resourcefulness", 0), 0, 100)
 
+	# Prosperity reputation bonus: +2 per prosperity departure on record (cap +10)
+	var ship_mems: Array = DatabaseManager.get_ship_memories(GameManager.save_id)
+	var prosperity_count: int = 0
+	for smem: Dictionary in ship_mems:
+		if smem.get("modifier_type", "") == "RECRUITMENT_REPUTATION":
+			prosperity_count += 1
+	if prosperity_count > 0:
+		var rep_bonus: int = mini(prosperity_count * 2, 10)
+		cm.stamina = clampi(cm.stamina + rep_bonus, 0, 100)
+		cm.cognition = clampi(cm.cognition + rep_bonus, 0, 100)
+		cm.reflexes = clampi(cm.reflexes + rep_bonus, 0, 100)
+		cm.social = clampi(cm.social + rep_bonus, 0, 100)
+		cm.resourcefulness = clampi(cm.resourcefulness + rep_bonus, 0, 100)
+
 
 static func _weighted_pick(weights: Dictionary) -> String:
 	## Given {"key": weight, ...}, returns a random key weighted by value.

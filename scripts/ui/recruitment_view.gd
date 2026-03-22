@@ -338,10 +338,23 @@ func _show_pay_split_popup() -> void:
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	candidate_container.add_child(info)
 
+	# Show last payout context
+	var last_payout: Label = Label.new()
+	var days_since: int = GameManager.day_count - GameManager.last_payout_day
+	var pending: int = GameManager.credits_since_last_payout
+	if GameManager.last_payout_day > 0:
+		last_payout.text = "Last payout: Day %d (%d days ago). Pending earnings: %d credits." % [
+			GameManager.last_payout_day, days_since, pending]
+	else:
+		last_payout.text = "No payouts yet. Pending earnings: %d credits." % pending
+	last_payout.add_theme_font_size_override("font_size", 12)
+	last_payout.add_theme_color_override("font_color", Color("#718096"))
+	candidate_container.add_child(last_payout)
+
 	var options: Array[Array] = [
-		[0.6, "60/40 Captain-Favoring", "You keep more. Crew recruitment is harder (-15% acceptance)."],
-		[0.5, "50/50 Equitable", "Fair split. No modifier to recruitment."],
-		[0.4, "40/60 Crew-Favoring", "Crew gets more. Recruitment is easier (+15% acceptance)."],
+		[0.6, "60/40 Captain-Favoring", "You keep 60%. Crew earns less — harder recruitment, morale penalty. Saves credits for upgrades."],
+		[0.5, "50/50 Equitable", "Even split. Fair pay, no modifier. Balanced approach."],
+		[0.4, "40/60 Crew-Favoring", "Crew keeps 60%. Better recruitment and morale. Costs more — slower ship upgrades."],
 	]
 
 	for opt: Array in options:

@@ -816,6 +816,13 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("save_state", "total_credits_spent", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "win_triggered", "INTEGER DEFAULT 0")
 	_add_column_if_missing("crew_members", "faction_zones_visited", "TEXT DEFAULT '[]'")
+	# Phase 4 (Crew Economy): wallet and payout tracking
+	_add_column_if_missing("crew_members", "wallet", "REAL DEFAULT 0.0")
+	_add_column_if_missing("crew_members", "lifetime_earnings", "REAL DEFAULT 0.0")
+	_add_column_if_missing("crew_members", "low_earning_ticks", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "prosperity_checked", "INTEGER DEFAULT 0")
+	_add_column_if_missing("save_state", "last_payout_day", "INTEGER DEFAULT 0")
+	_add_column_if_missing("save_state", "credits_since_last_payout", "INTEGER DEFAULT 0")
 	# Seed Phase 3 planet flags
 	_seed_phase3_planet_flags()
 	# Seed Phase 5.3 hospital flags
@@ -975,6 +982,20 @@ func deactivate_crew_member(crew_id: int) -> void:
 	db.query_with_bindings(
 		"UPDATE crew_members SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		[crew_id]
+	)
+
+
+func get_crew_wallet(crew_id: int) -> float:
+	var result: Array = db.select_rows("crew_members", "id = %d" % crew_id, ["wallet"])
+	if result.is_empty():
+		return 0.0
+	return result[0].get("wallet", 0.0)
+
+
+func update_crew_wallet(crew_id: int, new_wallet: float, new_lifetime: float) -> void:
+	db.query_with_bindings(
+		"UPDATE crew_members SET wallet = ?, lifetime_earnings = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		[new_wallet, new_lifetime, crew_id]
 	)
 
 

@@ -270,6 +270,10 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			"stat_bonus_all": cm.stat_bonus_all,
 			"origin": cm.origin,
 			"checkup_bonus_ticks": cm.checkup_bonus_ticks,
+			"wallet": cm.wallet,
+			"lifetime_earnings": cm.lifetime_earnings,
+			"low_earning_ticks": cm.low_earning_ticks,
+			"prosperity_checked": 1 if cm.prosperity_checked else 0,
 		})
 
 	# --- Phase 4.4: Ship memory triggers ---
@@ -319,6 +323,30 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 	if float(GameManager.hull_current) < 0.20 * float(GameManager.hull_max) and had_encounter:
 		var hull_death_events: Array[String] = check_hull_breach_death(roster)
 		events.append_array(hull_death_events)
+
+	# --- Payout check ---
+	if check_payout_due():
+		var payout_result: Dictionary = process_payout()
+		if not payout_result.crew_payouts.is_empty():
+			events.append(_format_payout_event(payout_result))
+			if payout_result.shortfall > 0:
+				events.append(_format_payout_crisis(payout_result))
+				# Crisis consequences: morale and loyalty hit for all crew
+				var crisis_roster: Array[CrewMember] = GameManager.get_crew_roster()
+				for cm_crisis: CrewMember in crisis_roster:
+					cm_crisis.morale = maxf(0.0, cm_crisis.morale - 8.0)
+					cm_crisis.loyalty = maxf(0.0, cm_crisis.loyalty - 5.0)
+					DatabaseManager.update_crew_member(cm_crisis.id, {
+						"morale": cm_crisis.morale,
+						"loyalty": cm_crisis.loyalty,
+					})
+				events.append("[color=#555B66]  ↳ Crew morale and loyalty dropped.[/color]")
+			# Check prosperity departures after payout
+			var prosperity_events: Array[String] = check_prosperity_departure(roster)
+			events.append_array(prosperity_events)
+			# Check underpaid departures after payout
+			var underpaid_events: Array[String] = check_underpaid_departure(roster)
+			events.append_array(underpaid_events)
 
 	# --- Relationship shifts ---
 	var rel_events: Array[String] = _process_relationships_tick(roster, had_encounter, encounter_was_combat, roles_tested)
@@ -460,6 +488,10 @@ static func tick_planet_arrival() -> Array[String]:
 			"stat_bonus_all": cm.stat_bonus_all,
 			"checkup_bonus_ticks": cm.checkup_bonus_ticks,
 			"faction_zones_visited": JSON.stringify(cm.faction_zones_visited),
+			"wallet": cm.wallet,
+			"lifetime_earnings": cm.lifetime_earnings,
+			"low_earning_ticks": cm.low_earning_ticks,
+			"prosperity_checked": 1 if cm.prosperity_checked else 0,
 		})
 
 		# Log notable fatigue recovery
@@ -2778,3 +2810,352 @@ static func check_disease_death(cm: CrewMember, roster: Array[CrewMember]) -> Ar
 	if randf() >= 0.05:
 		return []
 	return process_crew_death(cm, "disease", roster)
+
+
+# === PAYOUT SYSTEM ===
+
+# Payout fires every 20 days OR when cumulative earnings exceed 500 since last payout
+const PAYOUT_INTERVAL_DAYS: int = 20
+const PAYOUT_EARNINGS_THRESHOLD: int = 500
+# Minimum per-crew share to avoid low_earning_ticks (scales with game progression)
+const MIN_EARNING_PER_PAYOUT_BASE: int = 15
+
+# Prosperity departure thresholds
+const PROSPERITY_THRESHOLD_BASE: int = 1500
+const PROSPERITY_THRESHOLD_PER_LEVEL: int = 200
+
+# Underpaid departure constants
+const UNDERPAID_TICK_THRESHOLD: int = 5
+const UNDERPAID_LOYALTY_THRESHOLD: float = 30.0
+
+
+static func check_payout_due() -> bool:
+	## Returns true if a profit split should fire this tick.
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	if roster.is_empty():
+		return false
+
+	var days_since: int = GameManager.day_count - GameManager.last_payout_day
+	var earnings: int = GameManager.credits_since_last_payout
+
+	# Time-based trigger
+	if days_since >= PAYOUT_INTERVAL_DAYS:
+		return true
+
+	# Earnings threshold trigger
+	if earnings >= PAYOUT_EARNINGS_THRESHOLD:
+		return true
+
+	return false
+
+
+static func process_payout() -> Dictionary:
+	## Executes the profit split. Returns result data for event display.
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	if roster.is_empty():
+		return {"success": true, "total_pool": 0, "crew_share_total": 0,
+				"per_crew_share": 0, "shortfall": 0, "crew_payouts": []}
+
+	var earnings: int = GameManager.credits_since_last_payout
+
+	# Calculate crew's total share based on pay_split
+	# pay_split is captain's share (0.6 = captain gets 60%)
+	var crew_fraction: float = 1.0 - GameManager.pay_split
+	var crew_share_total: int = int(float(earnings) * crew_fraction)
+
+	# Per-crew split — equal shares
+	var crew_count: int = roster.size()
+	var per_crew_share: int = crew_share_total / maxi(crew_count, 1)
+
+	# Check if captain can cover the crew share from current credits
+	var shortfall: int = 0
+	var actual_crew_total: int = crew_share_total
+
+	if GameManager.credits < crew_share_total:
+		shortfall = crew_share_total - GameManager.credits
+		actual_crew_total = GameManager.credits  # Pay what we can
+		per_crew_share = actual_crew_total / maxi(crew_count, 1)
+
+	# Deduct from captain's credits
+	if actual_crew_total > 0:
+		GameManager.credits -= actual_crew_total
+		GameManager.total_credits_spent += actual_crew_total
+		EventBus.credits_changed.emit(GameManager.credits)
+
+	# Distribute to crew wallets
+	var crew_payouts: Array[Dictionary] = []
+	var min_earning: int = _get_min_earning_threshold()
+
+	for cm: CrewMember in roster:
+		var share: int = per_crew_share
+		cm.wallet += float(share)
+		cm.lifetime_earnings += float(share)
+
+		# Track low earning ticks
+		if share < min_earning:
+			cm.low_earning_ticks += 1
+		else:
+			# Reset counter on a decent payout
+			cm.low_earning_ticks = maxi(0, cm.low_earning_ticks - 2)
+
+		DatabaseManager.update_crew_member(cm.id, {
+			"wallet": cm.wallet,
+			"lifetime_earnings": cm.lifetime_earnings,
+			"low_earning_ticks": cm.low_earning_ticks,
+		})
+
+		crew_payouts.append({
+			"crew_id": cm.id,
+			"crew_name": cm.crew_name,
+			"share": share,
+			"wallet_total": cm.wallet,
+			"lifetime_total": cm.lifetime_earnings,
+		})
+
+	# Reset payout tracking
+	GameManager.last_payout_day = GameManager.day_count
+	GameManager.credits_since_last_payout = 0
+	DatabaseManager.update_save_state(GameManager.save_id, {
+		"last_payout_day": GameManager.last_payout_day,
+		"credits_since_last_payout": 0,
+	})
+
+	EventBus.payout_completed.emit(actual_crew_total, per_crew_share)
+
+	if shortfall > 0:
+		EventBus.payout_crisis.emit(shortfall)
+
+	return {
+		"success": shortfall == 0,
+		"total_pool": earnings,
+		"crew_share_total": actual_crew_total,
+		"per_crew_share": per_crew_share,
+		"shortfall": shortfall,
+		"crew_payouts": crew_payouts,
+	}
+
+
+static func _get_min_earning_threshold() -> int:
+	## Minimum per-crew payout to avoid low_earning_ticks.
+	return MIN_EARNING_PER_PAYOUT_BASE + GameManager.captain_level * 2
+
+
+static func _format_payout_event(result: Dictionary) -> String:
+	## Formats the payout event for the travel/planet log.
+	var per_crew: int = result.per_crew_share
+	var total: int = result.crew_share_total
+	var pool: int = result.total_pool
+	var split_display: String
+	if GameManager.pay_split >= 0.6:
+		split_display = "60/40 captain-favoring"
+	elif GameManager.pay_split <= 0.4:
+		split_display = "40/60 crew-favoring"
+	else:
+		split_display = "50/50"
+
+	if per_crew <= 0:
+		return "[color=#E67E22]Payout day. Earnings since last split: %d credits. Nothing to distribute.[/color]" % pool
+
+	return "[color=#E6D159]Payout day. %d credits earned since last split (%s). Each crew member receives %d credits. Captain pays %d total.[/color]" % [
+		pool, split_display, per_crew, total]
+
+
+static func _format_payout_crisis(result: Dictionary) -> String:
+	## Formats a payout crisis — captain couldn't cover the full split.
+	return "[color=#C0392B]Payout crisis: %d credits short. Crew received partial pay. This will not go unnoticed.[/color]" % result.shortfall
+
+
+# === PROSPERITY DEPARTURE ===
+
+static func check_prosperity_departure(roster: Array[CrewMember]) -> Array[String]:
+	## Checks if any high-earning crew want to leave to pursue personal goals.
+	## Called once per payout cycle after payout processing.
+	var events: Array[String] = []
+
+	for cm: CrewMember in roster:
+		if cm.prosperity_checked:
+			continue  # Only fires once per crew member ever
+
+		var threshold: int = PROSPERITY_THRESHOLD_BASE + GameManager.captain_level * PROSPERITY_THRESHOLD_PER_LEVEL
+
+		if cm.lifetime_earnings < float(threshold):
+			continue
+
+		# Mark as checked regardless of outcome — this only fires once
+		cm.prosperity_checked = true
+		DatabaseManager.update_crew_member(cm.id, {"prosperity_checked": 1})
+
+		# 50/50 base, modified by loyalty: high loyalty = more likely to stay
+		var stay_chance: float = 50.0
+		if cm.loyalty > 75.0:
+			stay_chance += 20.0  # 70% chance to stay
+		elif cm.loyalty > 50.0:
+			stay_chance += 10.0  # 60% chance to stay
+		elif cm.loyalty < 25.0:
+			stay_chance -= 15.0  # 35% chance to stay
+
+		var roll: float = randf() * 100.0
+
+		if roll <= stay_chance:
+			# Crew member stays — log it as a positive moment
+			events.append("[color=#27AE60]%s has earned enough to walk away — but they choose to stay. 'Not done yet, Captain.'[/color]" % cm.crew_name)
+			# Small loyalty boost for choosing to stay
+			cm.loyalty = minf(100.0, cm.loyalty + 5.0)
+			DatabaseManager.update_crew_member(cm.id, {"loyalty": cm.loyalty})
+			continue
+
+		# Crew member departs — prosperity departure
+		var planet: Dictionary = GameManager.get_current_planet()
+		var planet_name: String = planet.get("name", "port")
+
+		# Build departure event text
+		var departure_text: String = _get_prosperity_departure_text(cm, planet_name)
+		events.append("[color=#E6D159]%s[/color]" % departure_text)
+
+		# Generate positive legacy
+		_generate_prosperity_legacy(cm)
+
+		# Record prosperity departure for recruitment bonus
+		_record_prosperity_departure(cm)
+
+		# Deactivate crew member
+		DatabaseManager.deactivate_crew_member(cm.id)
+		DatabaseManager.delete_crew_relationships(cm.id)
+
+		EventBus.prosperity_departure.emit(cm.id, cm.crew_name)
+		EventBus.crew_changed.emit()
+
+		# Remaining crew reaction — bittersweet, not negative
+		for other: CrewMember in roster:
+			if other.id == cm.id:
+				continue
+			var rel: float = DatabaseManager.get_relationship_value(cm.id, other.id)
+			if rel > 30.0:
+				# Close friends get a small morale dip but loyalty boost
+				other.morale = maxf(0.0, other.morale - 3.0)
+				other.loyalty = minf(100.0, other.loyalty + 2.0)
+				DatabaseManager.update_crew_member(other.id, {
+					"morale": other.morale,
+					"loyalty": other.loyalty,
+				})
+
+		events.append("[color=#555B66]  ↳ A bittersweet departure. The crew wishes them well.[/color]")
+
+	return events
+
+
+static func _get_prosperity_departure_text(cm: CrewMember, planet_name: String) -> String:
+	## Returns flavor text for a prosperity departure.
+	var wallet: int = int(cm.lifetime_earnings)
+
+	# Species-flavored departure goals
+	var goal: String
+	match cm.species:
+		CrewMember.Species.GORVIAN:
+			goal = "open an engineering workshop back on Korrath Prime"
+		CrewMember.Species.VELLANI:
+			goal = "fund a cultural restoration project on Lirien"
+		CrewMember.Species.KRELLVANI:
+			goal = "buy their own ship and run their own crew"
+		_:
+			goal = "start a new life somewhere quieter"
+
+	return "%s finds you after the last payout. 'Captain, I've saved enough to %s. It's been a hell of a run. I owe you more than credits.' They've earned %d credits under your command. This isn't failure — it's graduation." % [
+		cm.crew_name, goal, wallet]
+
+
+static func _generate_prosperity_legacy(cm: CrewMember) -> void:
+	## Creates a positive legacy entry for a prosperity departure.
+	var role_name: String = cm.get_role_name()
+
+	DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+		"crew_name": cm.crew_name,
+		"crew_role": role_name,
+		"departure_type": "prosperity",
+		"legacy_text": "%s — Left to pursue their dreams (Day %d, lifetime earnings: %d)" % [
+			cm.crew_name, GameManager.day_count, int(cm.lifetime_earnings)],
+		"effect_type": "recruitment_bonus",
+		"effect_value": 5.0,
+		"effect_context": "new_hire",
+		"effect_ticks_remaining": -1,  # Permanent
+		"day_departed": GameManager.day_count,
+	})
+
+	# Boost morale floor slightly — successful crew departure is a good sign
+	var save: Dictionary = DatabaseManager.load_save()
+	var current_floor: float = save.get("morale_floor", 0.0)
+	DatabaseManager.update_save_state(GameManager.save_id, {
+		"morale_floor": current_floor + 1.0,
+	})
+	GameManager.morale_floor += 1.0
+
+	EventBus.legacy_created.emit(cm.crew_name, "prosperity")
+
+
+static func _record_prosperity_departure(cm: CrewMember) -> void:
+	## Records prosperity departure for recruitment stat bonus.
+	DatabaseManager.insert_ship_memory(GameManager.save_id, {
+		"event_description": "%s earned their future here" % cm.crew_name,
+		"modifier_type": "RECRUITMENT_REPUTATION",
+		"modifier_value": 5.0,
+		"context_match": "recruitment",
+		"day_acquired": GameManager.day_count,
+	})
+	EventBus.ship_memory_formed.emit("%s earned their future here" % cm.crew_name)
+
+
+# === UNDERPAID DEPARTURE ===
+
+static func check_underpaid_departure(roster: Array[CrewMember]) -> Array[String]:
+	## Checks if underpaid crew with low loyalty want to leave.
+	## Called once per payout cycle after payout processing.
+	var events: Array[String] = []
+
+	for cm: CrewMember in roster:
+		if cm.low_earning_ticks < UNDERPAID_TICK_THRESHOLD:
+			continue
+		if cm.loyalty > UNDERPAID_LOYALTY_THRESHOLD:
+			continue
+
+		# 30% chance per check when conditions are met
+		if randf() > 0.30:
+			continue
+
+		var departure_text: String = _get_underpaid_departure_text(cm)
+		events.append("[color=#E67E22]%s[/color]" % departure_text)
+
+		# Generate neutral legacy
+		_generate_underpaid_legacy(cm)
+
+		# Deactivate
+		DatabaseManager.deactivate_crew_member(cm.id)
+		DatabaseManager.delete_crew_relationships(cm.id)
+
+		EventBus.underpaid_departure.emit(cm.id, cm.crew_name)
+		EventBus.crew_changed.emit()
+
+		# Minimal crew reaction — they understand
+		events.append("[color=#555B66]  ↳ The crew understands. Better opportunities elsewhere.[/color]")
+
+	return events
+
+
+static func _get_underpaid_departure_text(cm: CrewMember) -> String:
+	return "%s approaches you quietly. 'Captain, I've appreciated the work. But I need to earn a living, and the numbers aren't adding up for me here. No hard feelings.' They pack their bag and disembark at the next port." % cm.crew_name
+
+
+static func _generate_underpaid_legacy(cm: CrewMember) -> void:
+	## Creates a neutral legacy entry for an underpaid departure.
+	DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+		"crew_name": cm.crew_name,
+		"crew_role": cm.get_role_name(),
+		"departure_type": "underpaid",
+		"legacy_text": "%s — Left for better pay (Day %d)" % [cm.crew_name, GameManager.day_count],
+		"effect_type": "",
+		"effect_value": 0.0,
+		"effect_context": "",
+		"effect_ticks_remaining": 0,
+		"day_departed": GameManager.day_count,
+	})
+
+	EventBus.legacy_created.emit(cm.crew_name, "underpaid")

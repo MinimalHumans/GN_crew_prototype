@@ -435,6 +435,10 @@ static func get_legacy_display_text(crew_name: String, departure_type: String,
 			return "We fight for those we've lost. %s" % effect_text
 		"voluntary":
 			return "Not everyone stays. The crew remembers."
+		"prosperity":
+			return "%s made their fortune here. Future crew take notice." % crew_name
+		"underpaid":
+			return "Not everyone can afford to stay."
 		"dismissal_positive":
 			return "Nobody's said it out loud, but the ship breathes easier."
 		"dismissal_negative":

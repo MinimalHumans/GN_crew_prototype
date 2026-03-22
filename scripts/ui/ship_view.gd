@@ -363,6 +363,39 @@ func _show_crew_profile(cm: CrewMember) -> void:
 			rom_lbl.add_theme_color_override("font_color", Color("#E6D159"))
 			detail_panel.add_child(rom_lbl)
 
+	# Wallet / earnings info
+	if cm.lifetime_earnings > 0.0 or cm.wallet > 0.0:
+		var wallet_row: HBoxContainer = HBoxContainer.new()
+		wallet_row.add_theme_constant_override("separation", 16)
+
+		var wallet_box: HBoxContainer = HBoxContainer.new()
+		wallet_box.add_theme_constant_override("separation", 4)
+		var wallet_label: Label = Label.new()
+		wallet_label.text = "Wallet:"
+		wallet_label.add_theme_font_size_override("font_size", 11)
+		wallet_box.add_child(wallet_label)
+		var wallet_val: Label = Label.new()
+		wallet_val.text = "%d cr" % int(cm.wallet)
+		wallet_val.add_theme_font_size_override("font_size", 10)
+		wallet_val.add_theme_color_override("font_color", Color(COLOR_CREDITS))
+		wallet_box.add_child(wallet_val)
+		wallet_row.add_child(wallet_box)
+
+		var earnings_box: HBoxContainer = HBoxContainer.new()
+		earnings_box.add_theme_constant_override("separation", 4)
+		var earnings_label: Label = Label.new()
+		earnings_label.text = "Lifetime:"
+		earnings_label.add_theme_font_size_override("font_size", 11)
+		earnings_box.add_child(earnings_label)
+		var earnings_val: Label = Label.new()
+		earnings_val.text = "%d cr" % int(cm.lifetime_earnings)
+		earnings_val.add_theme_font_size_override("font_size", 10)
+		earnings_val.add_theme_color_override("font_color", Color(COLOR_MUTED))
+		earnings_box.add_child(earnings_val)
+		wallet_row.add_child(earnings_box)
+
+		detail_panel.add_child(wallet_row)
+
 	# Active injuries
 	_add_injury_summary(cm)
 
@@ -797,10 +830,14 @@ func _add_crew_legacy_section(content: VBoxContainer) -> void:
 		match dep_type:
 			"retirement":
 				dep_color = COLOR_GOOD
+			"prosperity":
+				dep_color = "#E6D159"  # Gold — positive
 			"death":
 				dep_color = COLOR_BAD
 			"voluntary":
 				dep_color = COLOR_WARN
+			"underpaid":
+				dep_color = COLOR_MUTED
 			_:
 				dep_color = COLOR_MUTED
 
@@ -808,10 +845,14 @@ func _add_crew_legacy_section(content: VBoxContainer) -> void:
 		match dep_type:
 			"retirement":
 				dep_display = "Retired"
+			"prosperity":
+				dep_display = "Prosperity"
 			"death":
 				dep_display = "Deceased"
 			"voluntary":
 				dep_display = "Departed"
+			"underpaid":
+				dep_display = "Left for better pay"
 			"dismissal_positive":
 				dep_display = "Dismissed (amicably)"
 			"dismissal_negative":
@@ -856,6 +897,8 @@ func _add_crew_legacy_section(content: VBoxContainer) -> void:
 					effect_text = "Morale %+.0f" % effect_value
 				"relief":
 					effect_text = "Crew relief +%.0f morale" % effect_value
+				"recruitment_bonus":
+					effect_text = "New recruits +%.0f stats (reputation)" % effect_value
 
 			if not effect_text.is_empty():
 				var duration_text: String = " (permanent)" if ticks_left < 0 else " (%d ticks)" % ticks_left
