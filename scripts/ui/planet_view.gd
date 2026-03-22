@@ -325,32 +325,130 @@ func _check_mission_completions() -> void:
 func _display_mission_result(result: Dictionary) -> void:
 	var mission: Dictionary = result.mission
 	var outcome_text: String = TextTemplates.get_mission_outcome_text(result.outcome_tier)
+	var tier_color: String = _get_tier_color(result.outcome_tier)
 
 	_append_log("")
-	_append_log("[color=#4A90D9]--- Mission Complete: %s ---[/color]" % mission.title)
+	_append_log("[color=#4A90D9]━━━ Mission Complete: %s ━━━[/color]" % mission.title)
 
-	# Show which crew handled it
+	# Line 1: Outcome with tier
+	_append_log("[color=%s]%s[/color]" % [tier_color, outcome_text])
+
+	# Line 2: Transit conditions summary — what affected this mission
+	var modifiers: Array = result.get("condition_modifiers", [])
+	if not modifiers.is_empty():
+		var positive_sources: Array[String] = []
+		var negative_sources: Array[String] = []
+		for mod: Dictionary in modifiers:
+			if mod.value < 0:
+				positive_sources.append(mod.source)
+			elif mod.value > 0:
+				negative_sources.append(mod.source)
+
+		if not positive_sources.is_empty():
+			var unique_pos: Array[String] = _deduplicate(positive_sources)
+			_append_log("[color=#27AE60]  Helped by: %s[/color]" % ", ".join(unique_pos))
+		if not negative_sources.is_empty():
+			var unique_neg: Array[String] = _deduplicate(negative_sources)
+			_append_log("[color=#C0392B]  Hindered by: %s[/color]" % ", ".join(unique_neg))
+	else:
+		_append_log("[color=#718096]  No significant transit conditions affected this mission.[/color]")
+
+	# Line 3: Crew contribution — who handled it and how well
 	var primary_role: String = result.get("primary_role", "")
 	var secondary_role: String = result.get("secondary_role", "")
 	if primary_role != "":
 		var crew_line: String = "  Crew: %s" % primary_role
 		if secondary_role != "":
-			crew_line += " + %s (support)" % secondary_role
+			crew_line += ", %s (support)" % secondary_role
 		_append_log("[color=#718096]%s[/color]" % crew_line)
 
-	_append_log(outcome_text)
+	# Line 4: What would have changed the result (only on non-critical-success)
+	if result.outcome_tier != "critical_success":
+		var suggestion: String = _get_improvement_suggestion(result)
+		if suggestion != "":
+			_append_log("[color=#555B66]  %s[/color]" % suggestion)
 
+	# Line 5: Difficulty breakdown (subtle, for players who want to understand the system)
+	var base_diff: int = result.get("base_difficulty", 0)
+	var cond_mod: int = result.get("condition_modifier", 0)
+	var eff_diff: int = result.get("effective_difficulty", base_diff)
+	if cond_mod != 0:
+		var mod_color: String = "#27AE60" if cond_mod < 0 else "#C0392B"
+		_append_log("[color=#555B66]  Base difficulty: %d → Effective: %d [color=%s](%+d from transit)[/color][/color]" % [
+			base_diff, eff_diff, mod_color, cond_mod])
+
+	# Rewards
 	if result.credit_reward > 0:
-		_append_log("[color=#27AE60]+%d credits[/color]" % result.credit_reward)
+		_append_log("[color=#27AE60]  +%d credits[/color]" % result.credit_reward)
 	if result.xp_reward > 0:
-		_append_log("[color=#4A90D9]+%d XP[/color]" % result.xp_reward)
+		_append_log("[color=#4A90D9]  +%d XP[/color]" % result.xp_reward)
 	if result.hull_damage > 0:
-		_append_log("[color=#C0392B]Hull damage: -%d HP[/color]" % result.hull_damage)
+		_append_log("[color=#C0392B]  Hull damage: -%d HP[/color]" % result.hull_damage)
 
 	# Crew consequence events from the mission
 	var crew_events: Array = result.get("crew_events", [])
 	for event_text: String in crew_events:
-		_append_log(event_text)
+		_append_log("  %s" % event_text)
+
+	_append_log("[color=#4A90D9]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/color]")
+
+
+func _get_tier_color(tier: String) -> String:
+	match tier:
+		"critical_success": return "#27AE60"
+		"success": return "#27AE60"
+		"marginal_success": return "#E67E22"
+		"failure": return "#C0392B"
+		"critical_failure": return "#C0392B"
+		_: return "#718096"
+
+
+func _get_improvement_suggestion(result: Dictionary) -> String:
+	## Returns a "what would have helped" line based on negative condition modifiers.
+	var suggestion_modifiers: Array = result.get("condition_modifiers", [])
+
+	# Find the largest negative contributor (highest positive value = most harmful)
+	var worst_source: String = ""
+	var worst_value: int = 0
+	for mod: Dictionary in suggestion_modifiers:
+		if mod.value > worst_value:
+			worst_value = mod.value
+			worst_source = mod.get("type", "")
+
+	if worst_source == "":
+		return ""
+
+	match worst_source:
+		"no_medic":
+			return "A Medic would have made a significant difference."
+		"no_engineer":
+			return "An Engineer could have mitigated technical problems."
+		"no_gunner":
+			return "A Gunner would have improved combat readiness."
+		"no_science_officer":
+			return "A Science Officer was needed for this mission type."
+		"no_security":
+			return "A Security Chief would have improved safety."
+		"combat_incident", "combat_failure", "combat_critical_fail":
+			return "A safer route would have avoided combat complications."
+		"hull_damage":
+			return "Maintaining hull integrity would have helped."
+		"low_morale":
+			return "Better crew morale would have improved performance."
+		"faction_outsider":
+			return "Faction connections at the destination would have eased things."
+
+	return ""
+
+
+func _deduplicate(arr: Array[String]) -> Array[String]:
+	var seen: Dictionary = {}
+	var deduped: Array[String] = []
+	for s: String in arr:
+		if not seen.has(s):
+			seen[s] = true
+			deduped.append(s)
+	return deduped
 
 
 # === LEVEL-UP NOTIFICATION ===

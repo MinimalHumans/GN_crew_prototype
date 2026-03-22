@@ -672,13 +672,41 @@ func complete_missions_at_planet(planet_id: int) -> Array[Dictionary]:
 		results.append(result)
 		DatabaseManager.remove_active_mission(mission.id)
 
+	# Clear condition tracker after all missions resolve
+	MissionConditionTracker.clear()
+
 	return results
 
 
 func _resolve_mission(mission: Dictionary) -> Dictionary:
-	## Runs crew-aware stat check and calculates rewards for a completed mission.
-	var scaled_difficulty: int = DIFFICULTY_SCALE_BASE + mission.difficulty * DIFFICULTY_SCALE_PER_STAR
+	## Runs crew-aware stat check with condition modifiers and calculates rewards.
+	var base_difficulty: int = DIFFICULTY_SCALE_BASE + mission.difficulty * DIFFICULTY_SCALE_PER_STAR
 	var roster: Array[CrewMember] = get_crew_roster()
+
+	# Apply hull condition at resolution time
+	MissionConditionTracker.apply_hull_condition()
+
+	# Get accumulated condition modifier
+	var condition_modifier: int = MissionConditionTracker.get_total_modifier(mission.id)
+
+	# Luck factor: if transit was completely clean, small bonus
+	var tags: Array = MissionConditionTracker.get_tags(mission.id)
+	var had_any_negative: bool = false
+	for tag: String in tags:
+		if tag in ["combat_incident", "combat_failure", "combat_critical_fail", "hull_damage",
+					"no_medic", "no_engineer", "no_gunner", "no_science_officer", "no_security",
+					"low_morale", "faction_outsider"]:
+			had_any_negative = true
+			break
+
+	if not had_any_negative and tags.size() > 0:
+		# Clean run luck bonus: -5 to -15 difficulty
+		var luck_bonus: int = -randi_range(5, 15)
+		condition_modifier += luck_bonus
+		MissionConditionTracker.apply_modifier(mission.id, "luck", luck_bonus,
+			"Clean transit", "Smooth sailing — luck was on your side.")
+
+	var scaled_difficulty: int = maxi(10, base_difficulty + condition_modifier)
 
 	# Parse roles from mission data
 	var roles: Array = JSON.parse_string(mission.get("roles_tested", "[]"))
@@ -751,6 +779,30 @@ func _resolve_mission(mission: Dictionary) -> Dictionary:
 		var loyalty_events: Array[String] = CrewSimulation.apply_mission_loyalty(outcome.tier, roster)
 		crew_events.append_array(loyalty_events)
 
+	# Award experience to crew whose roles contributed to mission conditions
+	for cm: CrewMember in roster:
+		var contributed: bool = false
+		for tag: String in tags:
+			match cm.role:
+				CrewMember.Role.MEDIC:
+					if tag == "medic_present": contributed = true
+				CrewMember.Role.ENGINEER:
+					if tag == "engineer_veteran": contributed = true
+				CrewMember.Role.GUNNER:
+					if tag == "gunner_veteran": contributed = true
+				CrewMember.Role.NAVIGATOR:
+					if tag == "navigator_veteran": contributed = true
+				CrewMember.Role.SCIENCE_OFFICER:
+					if tag in ["science_officer_present", "science_veteran"]: contributed = true
+				CrewMember.Role.SECURITY_CHIEF:
+					if tag == "security_present": contributed = true
+				CrewMember.Role.COMMS_OFFICER:
+					if tag == "comms_veteran": contributed = true
+
+		if contributed:
+			cm.add_role_experience(2.0)
+			DatabaseManager.update_crew_member(cm.id, {"role_experience": cm.role_experience})
+
 	return {
 		"mission": mission,
 		"outcome_tier": outcome.tier,
@@ -761,6 +813,12 @@ func _resolve_mission(mission: Dictionary) -> Dictionary:
 		"crew_events": crew_events,
 		"primary_role": primary_role,
 		"secondary_role": secondary_role,
+		# Condition data for narrative report
+		"base_difficulty": base_difficulty,
+		"condition_modifier": condition_modifier,
+		"effective_difficulty": scaled_difficulty,
+		"condition_modifiers": MissionConditionTracker.get_modifiers(mission.id),
+		"condition_tags": MissionConditionTracker.get_tags(mission.id),
 	}
 
 
