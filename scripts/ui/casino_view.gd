@@ -183,31 +183,43 @@ func _gamble(crew_id: int, stake: int, from_wallet: bool) -> void:
 	# Roll: base 1-100, Resourcefulness adds up to +20
 	var roll: int = randi_range(1, 100) + cm.resourcefulness / 5
 
+	# Phase 7: Gambler trait — adjust thresholds
+	var jackpot_threshold: int = 130
+	var big_win_threshold: int = 100
+	var small_win_threshold: int = 70
+	var break_even_threshold: int = 40
+	var bad_loss_threshold: int = 15
+
+	if cm.has_trait("gambler"):
+		jackpot_threshold -= 10   # Easier to jackpot
+		big_win_threshold -= 8    # Easier to win big
+		bad_loss_threshold += 10  # Wider bad loss range (15 → 25)
+
 	var result_text: String
 	var morale_change: float = 0.0
 	var payout: int = 0
 
-	if roll > 130:
+	if roll > jackpot_threshold:
 		# Jackpot
 		payout = stake * 5
 		morale_change = 15.0
 		result_text = "[color=%s]JACKPOT! %s can't believe it. %d credits![/color]" % [COLOR_CREDITS, cm.crew_name, payout]
-	elif roll > 100:
+	elif roll > big_win_threshold:
 		# Big win
 		payout = stake * 3
 		morale_change = 10.0
 		result_text = "[color=%s]%s wins big — %d credits. Drinks are on them.[/color]" % [COLOR_GOOD, cm.crew_name, payout]
-	elif roll > 70:
+	elif roll > small_win_threshold:
 		# Small win
 		payout = int(float(stake) * 1.5)
 		morale_change = 5.0
 		result_text = "[color=%s]%s comes out ahead — %d credits.[/color]" % [COLOR_GOOD, cm.crew_name, payout]
-	elif roll > 40:
+	elif roll > break_even_threshold:
 		# Break even
 		payout = stake
 		morale_change = 0.0
 		result_text = "[color=%s]%s breaks even. Could have been worse.[/color]" % [COLOR_MUTED, cm.crew_name]
-	elif roll > 15:
+	elif roll > bad_loss_threshold:
 		# Loss
 		payout = 0
 		morale_change = -5.0
@@ -224,6 +236,23 @@ func _gamble(crew_id: int, stake: int, from_wallet: bool) -> void:
 			if bystander.id != cm.id:
 				var rel: float = DatabaseManager.get_relationship_value(cm.id, bystander.id)
 				DatabaseManager.update_relationship(cm.id, bystander.id, rel - 5.0)
+				# Phase 7: In Debt — bystander covers losses
+				if bystander.wallet >= 20.0 and cm.debt_amount <= 0.0:
+					var debt: float = float(randi_range(15, 40))
+					cm.debt_amount = debt
+					cm.debt_creditor_id = bystander.id
+					bystander.wallet -= debt
+					DatabaseManager.update_crew_member(bystander.id, {"wallet": bystander.wallet})
+					DatabaseManager.update_crew_member(cm.id, {
+						"debt_amount": debt,
+						"debt_creditor_id": bystander.id,
+					})
+					if not cm.has_trait("in_debt"):
+						cm.traits.append("in_debt")
+						DatabaseManager.update_crew_member(cm.id, {"traits": JSON.stringify(cm.traits)})
+						EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "in_debt", "In Debt")
+					log_message.emit("[color=#E67E22]%s covered %s's losses — %d credits. They'll want that back.[/color]" % [
+						bystander.crew_name, cm.crew_name, int(debt)])
 
 	# Apply payout
 	if from_wallet and payout > 0:
@@ -231,12 +260,16 @@ func _gamble(crew_id: int, stake: int, from_wallet: bool) -> void:
 	elif not from_wallet and payout > 0:
 		GameManager.add_credits(payout)
 
+	# Phase 7: Increment casino visit count
+	cm.casino_visit_count += 1
+
 	# Apply morale
 	cm.morale = clampf(cm.morale + morale_change, 0.0, 100.0)
 	DatabaseManager.update_crew_member(cm.id, {
 		"wallet": cm.wallet,
 		"lifetime_earnings": cm.lifetime_earnings,
 		"morale": cm.morale,
+		"casino_visit_count": cm.casino_visit_count,
 	})
 
 	log_message.emit(result_text)

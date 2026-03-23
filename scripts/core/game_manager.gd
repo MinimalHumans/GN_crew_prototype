@@ -1001,7 +1001,25 @@ func _finalize_recruitment(candidate: CrewMember, starting_morale: float, result
 			continue
 		var existing_species: CrewMember.Species = CrewMember._parse_species(row.species)
 		var friction: int = CrewMember.get_friction_between(candidate.species, existing_species)
+		# Phase 7: Worldly trait reduces starting friction
+		if friction < 0:
+			var existing_cm: CrewMember = CrewMember.from_dict(row)
+			if existing_cm.has_trait("worldly"):
+				friction = int(float(friction) * 0.5)
 		DatabaseManager.insert_crew_relationship(crew_id, row.id, float(friction))
+
+	# Phase 7: Set initial last_faction_visit_day if hired on faction planet
+	var planet: Dictionary = DatabaseManager.get_planet(current_planet_id)
+	if planet.get("faction", "") == candidate.get_species_name():
+		DatabaseManager.update_crew_member(crew_id, {"last_faction_visit_day": day_count})
+
+	# Phase 7: Trusted Veteran new hire morale bonus
+	var existing_roster: Array[CrewMember] = get_crew_roster()
+	for existing_cm_tv: CrewMember in existing_roster:
+		if existing_cm_tv.has_trait("trusted_veteran"):
+			var new_morale: float = clampf(starting_morale + 8.0, 0.0, 100.0)
+			DatabaseManager.update_crew_member(crew_id, {"morale": new_morale})
+			break  # Only apply once
 
 	# Ship culture propagation: copy ship memories as crew memories at 30% modifier
 	var ship_memories: Array = DatabaseManager.get_ship_memories(save_id)

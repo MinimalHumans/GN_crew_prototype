@@ -418,6 +418,18 @@ func _show_crew_profile(cm: CrewMember) -> void:
 
 		detail_panel.add_child(wallet_row)
 
+	# Phase 7: Debt display
+	if cm.debt_amount > 0.0:
+		var creditor_name: String = "a crewmate"
+		if cm.debt_creditor_id > 0:
+			var cred_data: Dictionary = DatabaseManager.get_crew_member(cm.debt_creditor_id)
+			creditor_name = cred_data.get("name", "a crewmate")
+		var debt_lbl: Label = Label.new()
+		debt_lbl.text = "Owes %d cr to %s" % [int(cm.debt_amount), creditor_name]
+		debt_lbl.add_theme_font_size_override("font_size", 10)
+		debt_lbl.add_theme_color_override("font_color", Color("#C0392B"))
+		detail_panel.add_child(debt_lbl)
+
 	# Active injuries
 	_add_injury_summary(cm)
 

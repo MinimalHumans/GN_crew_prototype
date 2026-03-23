@@ -85,6 +85,16 @@ var leave_count: int = 0
 # Faction zone tracking for Trusted by Faction trait
 var faction_zones_visited: Array = []  # Array of faction zone strings visited while aboard
 
+# Phase 7: Homesick tracking
+var last_faction_visit_day: int = 0
+
+# Phase 7: Gambler tracking
+var casino_visit_count: int = 0
+
+# Phase 7: Debt tracking
+var debt_amount: float = 0.0
+var debt_creditor_id: int = -1
+
 # Phase 4 (Crew Economy): wallet and payout tracking
 var wallet: float = 0.0
 var lifetime_earnings: float = 0.0
@@ -252,6 +262,56 @@ const TRAIT_DEFINITIONS: Dictionary = {
 		"positive": {"stats": {"social": 3, "cognition": 2}},
 		"negative": {},
 		"acquisition_text": "{name} came back from leave different. Quieter, maybe. But there's something steadier about them now.",
+	},
+	# Phase 7: New traits
+	"veteran_spacer": {
+		"name": "Veteran Spacer",
+		"description": "The void is home now.",
+		"positive": {"stats": {"cognition": 8, "reflexes": 3}, "context": "navigation"},
+		"negative": {"docked_restless": -1},
+		"acquisition_text": "{name} doesn't flinch at jump transit anymore. The void isn't hostile — it's familiar. They've earned their stars.",
+	},
+	"long_service": {
+		"name": "Long Service",
+		"description": "Part of the ship's backbone.",
+		"positive": {"loyalty_floor": 30.0, "nearby_morale_bonus": 2.0},
+		"negative": {},
+		"acquisition_text": "{name} has been aboard longer than some of the bulkheads. They're not just crew anymore — they're the ship's memory.",
+	},
+	"homesick": {
+		"name": "Homesick",
+		"description": "Needs to go home.",
+		"positive": {},
+		"negative": {"periodic_morale_dip": -2, "dip_interval": 5},
+		"acquisition_text": "{name} hasn't been home in too long. You can see it in their eyes — a distance that has nothing to do with space.",
+	},
+	"worldly": {
+		"name": "Worldly",
+		"description": "Seen every corner of the galaxy.",
+		"positive": {"stats": {"social": 5}, "friction_reduction": 0.5},
+		"negative": {},
+		"acquisition_text": "{name} has walked the halls of every faction. Commonwealth order, Hexarchy precision, FPU warmth, Outer Reach grit — they've seen it all. Nothing surprises them anymore.",
+	},
+	"gambler": {
+		"name": "Gambler",
+		"description": "Can't resist a table.",
+		"positive": {"casino_bonus": 15},
+		"negative": {"casino_penalty": 10},
+		"acquisition_text": "{name} has developed a taste for the tables. That can go very right — or very wrong.",
+	},
+	"in_debt": {
+		"name": "In Debt",
+		"description": "Owes a crewmate money.",
+		"positive": {},
+		"negative": {"loyalty_instability": true},
+		"acquisition_text": "{name} owes money to a crewmate. It's an uncomfortable situation for everyone.",
+	},
+	"trusted_veteran": {
+		"name": "Trusted Veteran",
+		"description": "The crew's anchor.",
+		"positive": {"new_hire_morale_bonus": 8.0, "nearby_morale_bonus": 1.0},
+		"negative": {},
+		"acquisition_text": "{name} is the person new crew ask about on their first day. 'What's the captain like?' 'Is it safe here?' {name} answers honestly — and that honesty is why people stay.",
 	},
 	# Phase 5.5: Grief resolution traits
 	"resolved": {
@@ -860,6 +920,11 @@ static func from_dict(data: Dictionary) -> CrewMember:
 	cm.leave_return_day = data.get("leave_return_day", -1)
 	cm.leave_reason = data.get("leave_reason", "")
 	cm.leave_count = data.get("leave_count", 0)
+	# Phase 7 fields
+	cm.last_faction_visit_day = data.get("last_faction_visit_day", 0)
+	cm.casino_visit_count = data.get("casino_visit_count", 0)
+	cm.debt_amount = data.get("debt_amount", 0.0)
+	cm.debt_creditor_id = data.get("debt_creditor_id", -1)
 	# Parse faction zones visited
 	var fzv_str: String = data.get("faction_zones_visited", "[]")
 	if fzv_str != "" and fzv_str != "[]":
@@ -952,6 +1017,10 @@ func to_dict() -> Dictionary:
 		"leave_reason": leave_reason,
 		"leave_count": leave_count,
 		"faction_zones_visited": JSON.stringify(faction_zones_visited),
+		"last_faction_visit_day": last_faction_visit_day,
+		"casino_visit_count": casino_visit_count,
+		"debt_amount": debt_amount,
+		"debt_creditor_id": debt_creditor_id,
 		"wallet": wallet,
 		"lifetime_earnings": lifetime_earnings,
 		"low_earning_ticks": low_earning_ticks,

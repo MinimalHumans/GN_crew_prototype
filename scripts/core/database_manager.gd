@@ -822,6 +822,11 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("save_state", "total_credits_spent", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "win_triggered", "INTEGER DEFAULT 0")
 	_add_column_if_missing("crew_members", "faction_zones_visited", "TEXT DEFAULT '[]'")
+	# Phase 7: Trait tracking columns
+	_add_column_if_missing("crew_members", "last_faction_visit_day", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "casino_visit_count", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "debt_amount", "REAL DEFAULT 0.0")
+	_add_column_if_missing("crew_members", "debt_creditor_id", "INTEGER DEFAULT -1")
 	# Phase 4 (Crew Economy): wallet and payout tracking
 	_add_column_if_missing("crew_members", "wallet", "REAL DEFAULT 0.0")
 	_add_column_if_missing("crew_members", "lifetime_earnings", "REAL DEFAULT 0.0")

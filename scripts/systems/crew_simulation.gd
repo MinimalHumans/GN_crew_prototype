@@ -188,6 +188,15 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 				"[color=#718096]%s stares at nothing for a long moment, then shakes it off.[/color]" % cm.crew_name,
 				{"morale": -3.0})
 
+		# Phase 7: Homesick periodic morale dip every 5 ticks
+		if cm.has_trait("homesick") and cm.total_jumps % 5 == 0:
+			cm.morale = maxf(0.0, cm.morale - 2.0)
+
+		# Phase 7: In Debt loyalty instability
+		if cm.has_trait("in_debt"):
+			var jitter: float = randf_range(-2.0, 2.0)
+			cm.loyalty = clampf(cm.loyalty + jitter, 0.0, 100.0)
+
 		# Spacer's Instinct: already handled via docked_ticks (see tick_planet_arrival)
 
 		# --- Morale drift ---
@@ -204,6 +213,26 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		var context: String = _get_current_context(had_encounter, encounter_was_combat)
 		modifier_sum += cm.get_memory_morale_modifier(context)
 
+		# Phase 7: Long Service nearby morale bonus
+		for other_ls: CrewMember in roster:
+			if other_ls.id == cm.id:
+				continue
+			if other_ls.has_trait("long_service"):
+				var rel_ls: float = DatabaseManager.get_relationship_value(cm.id, other_ls.id)
+				if rel_ls > 10.0:
+					modifier_sum += 2.0
+					break  # Only count once
+
+		# Phase 7: Trusted Veteran nearby morale bonus (stacks with Long Service)
+		for other_tv: CrewMember in roster:
+			if other_tv.id == cm.id:
+				continue
+			if other_tv.has_trait("trusted_veteran"):
+				var rel_tv: float = DatabaseManager.get_relationship_value(cm.id, other_tv.id)
+				if rel_tv > 0.0:
+					modifier_sum += 1.0
+					break  # Only count once
+
 		# Calculate target morale and drift toward it
 		var target: float = clampf(cm.morale + modifier_sum, 0.0, 100.0)
 		var distance: float = absf(target - cm.morale)
@@ -219,6 +248,10 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 		# Phase 5.5: Apply morale floor from legacy effects
 		if GameManager.morale_floor > 0.0 and cm.morale < GameManager.morale_floor:
 			cm.morale = GameManager.morale_floor
+
+		# Phase 7: Long Service loyalty floor
+		if cm.has_trait("long_service") and cm.loyalty < 30.0:
+			cm.loyalty = 30.0
 
 		# --- Injury recovery (Phase 5.3: structured with permanent impairment check) ---
 		var recovery_events: Array[String] = check_permanent_impairment(cm)
@@ -274,6 +307,10 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			"lifetime_earnings": cm.lifetime_earnings,
 			"low_earning_ticks": cm.low_earning_ticks,
 			"prosperity_checked": 1 if cm.prosperity_checked else 0,
+			"last_faction_visit_day": cm.last_faction_visit_day,
+			"casino_visit_count": cm.casino_visit_count,
+			"debt_amount": cm.debt_amount,
+			"debt_creditor_id": cm.debt_creditor_id,
 		})
 
 	# --- Phase 4.4: Ship memory triggers ---
@@ -348,6 +385,40 @@ static func tick_jump(had_encounter: bool, encounter_was_combat: bool = false,
 			var underpaid_events: Array[String] = check_underpaid_departure(roster)
 			events.append_array(underpaid_events)
 
+	# --- Phase 7: Debt resolution ---
+	for cm_debt: CrewMember in roster:
+		if cm_debt.debt_amount > 0.0 and cm_debt.wallet >= cm_debt.debt_amount:
+			var creditor_id: int = cm_debt.debt_creditor_id
+			var debt: float = cm_debt.debt_amount
+			cm_debt.wallet -= debt
+			cm_debt.debt_amount = 0.0
+			cm_debt.debt_creditor_id = -1
+
+			# Pay the creditor
+			var creditor_data: Dictionary = DatabaseManager.get_crew_member(creditor_id)
+			if not creditor_data.is_empty() and bool(creditor_data.get("is_active", 0)):
+				var cred_wallet: float = creditor_data.get("wallet", 0.0) + debt
+				DatabaseManager.update_crew_member(creditor_id, {"wallet": cred_wallet})
+
+				# Relationship boost from debt repayment
+				var rel_debt: float = DatabaseManager.get_relationship_value(cm_debt.id, creditor_id)
+				DatabaseManager.update_relationship(cm_debt.id, creditor_id, clampf(rel_debt + 10.0, -100.0, 100.0))
+
+				events.append("[color=#27AE60]%s pays back the %d credits owed to %s. A weight lifted.[/color]" % [
+					cm_debt.crew_name, int(debt), creditor_data.get("name", "their crewmate")])
+
+			# Remove In Debt trait
+			if cm_debt.has_trait("in_debt"):
+				cm_debt.traits.erase("in_debt")
+
+			DatabaseManager.update_crew_member(cm_debt.id, {
+				"wallet": cm_debt.wallet,
+				"debt_amount": 0.0,
+				"debt_creditor_id": -1,
+				"traits": JSON.stringify(cm_debt.traits),
+			})
+			events.append("[color=#555B66]  ↳ Debt cleared. Relationship improved.[/color]")
+
 	# --- Relationship shifts ---
 	var rel_events: Array[String] = _process_relationships_tick(roster, had_encounter, encounter_was_combat, roles_tested)
 	events.append_array(rel_events)
@@ -394,9 +465,11 @@ static func tick_planet_arrival() -> Array[String]:
 		# Track docked ticks for Spacer's Instinct restlessness
 		cm.docked_ticks += 1
 
-		# Spacer's Instinct: restless when docked > 5 ticks
+		# Spacer's Instinct / Veteran Spacer: restless when docked > 5 ticks
 		if cm.has_trait("spacers_instinct") and cm.docked_ticks > 5:
 			cm.morale = maxf(0.0, cm.morale - 2.0)
+		elif cm.has_trait("veteran_spacer") and cm.docked_ticks > 5:
+			cm.morale = maxf(0.0, cm.morale - 1.0)  # Milder restlessness
 
 		# Check for comfort food: did we buy food at a planet matching this crew's faction?
 		var planet: Dictionary = GameManager.get_current_planet()
@@ -412,6 +485,17 @@ static func tick_planet_arrival() -> Array[String]:
 		var planet_faction: String = planet.get("faction", "")
 		if planet_faction != "" and planet_faction not in cm.faction_zones_visited:
 			cm.faction_zones_visited.append(planet_faction)
+
+		# Phase 7: Update last faction visit day
+		if planet_faction == cm.get_species_name():
+			cm.last_faction_visit_day = GameManager.day_count
+
+		# Phase 7: Remove Homesick trait on faction homeworld visit
+		if cm.has_trait("homesick") and planet_faction == cm.get_species_name():
+			cm.traits.erase("homesick")
+			DatabaseManager.update_crew_member(cm.id, {"traits": JSON.stringify(cm.traits)})
+			events.append("[color=#27AE60]%s breathes easier. Being home, even briefly, lifts the weight.[/color]" % cm.crew_name)
+			events.append("[color=#555B66]  ↳ Homesick trait removed.[/color]")
 
 		# Phase 4.2: First faction homeworld visit memory
 		cm.load_memories()
@@ -504,6 +588,10 @@ static func tick_planet_arrival() -> Array[String]:
 			"stat_bonus_all": cm.stat_bonus_all,
 			"checkup_bonus_ticks": cm.checkup_bonus_ticks,
 			"faction_zones_visited": JSON.stringify(cm.faction_zones_visited),
+			"last_faction_visit_day": cm.last_faction_visit_day,
+			"casino_visit_count": cm.casino_visit_count,
+			"debt_amount": cm.debt_amount,
+			"debt_creditor_id": cm.debt_creditor_id,
 			"wallet": cm.wallet,
 			"lifetime_earnings": cm.lifetime_earnings,
 			"low_earning_ticks": cm.low_earning_ticks,
@@ -595,6 +683,10 @@ static func _process_relationships_tick(roster: Array[CrewMember], had_encounter
 			# Quiet jump social interaction (15% chance per pair)
 			if not had_encounter and randf() < 0.15:
 				var social_delta: float = _calculate_social_interaction(cm_a, cm_b)
+				# Phase 7: Worldly trait halves negative friction
+				if social_delta < 0.0:
+					if cm_a.has_trait("worldly") or cm_b.has_trait("worldly"):
+						social_delta *= 0.5
 				delta += social_delta
 				if social_delta > 0.5:
 					var social_event: String = CrewEventTemplates.get_positive_social_text(cm_a.crew_name, cm_b.crew_name)
@@ -981,8 +1073,8 @@ static func _check_trait_acquisition(cm: CrewMember, roster: Array[CrewMember]) 
 	if not cm.has_trait("battle_tested") and cm.combat_encounter_count >= 10:
 		_award_trait(cm, "battle_tested", events)
 
-	# Spacer's Instinct: 100+ total jumps
-	if not cm.has_trait("spacers_instinct") and cm.total_jumps >= 100:
+	# Spacer's Instinct: 100+ total jumps (skip if already upgraded to Veteran Spacer)
+	if not cm.has_trait("spacers_instinct") and not cm.has_trait("veteran_spacer") and cm.total_jumps >= 100:
 		_award_trait(cm, "spacers_instinct", events)
 
 	# Iron Stomach: 20+ low food ticks
@@ -1033,6 +1125,47 @@ static func _check_trait_acquisition(cm: CrewMember, roster: Array[CrewMember]) 
 					own_zone_visits += 1
 			if own_zone_visits >= 3:
 				_award_trait(cm, "trusted_by_faction", events)
+
+	# --- Phase 7 Traits ---
+
+	# Veteran Spacer: upgrades Spacer's Instinct at 200+ jumps
+	if not cm.has_trait("veteran_spacer") and cm.has_trait("spacers_instinct") and cm.total_jumps >= 200:
+		cm.traits.erase("spacers_instinct")
+		DatabaseManager.update_crew_member(cm.id, {"traits": JSON.stringify(cm.traits)})
+		_award_trait(cm, "veteran_spacer", events)
+
+	# Long Service: 100+ days aboard, loyalty >= 50
+	if not cm.has_trait("long_service"):
+		var days_aboard_ls: int = GameManager.day_count - cm.hired_day
+		if days_aboard_ls >= 100 and cm.loyalty >= 50.0:
+			_award_trait(cm, "long_service", events)
+
+	# Homesick: 60+ days since faction homeworld visit, 30+ days aboard
+	if not cm.has_trait("homesick"):
+		var days_since_home: int = GameManager.day_count - cm.last_faction_visit_day
+		if days_since_home >= 60 and (GameManager.day_count - cm.hired_day) >= 30:
+			_award_trait(cm, "homesick", events)
+
+	# Worldly: visited all four faction zones
+	if not cm.has_trait("worldly"):
+		var required_factions: Array[String] = ["Human", "Gorvian", "Vellani", "Krellvani"]
+		var has_all_factions: bool = true
+		for faction: String in required_factions:
+			if faction not in cm.faction_zones_visited:
+				has_all_factions = false
+				break
+		if has_all_factions:
+			_award_trait(cm, "worldly", events)
+
+	# Gambler: 3+ casino visits
+	if not cm.has_trait("gambler") and cm.casino_visit_count >= 3:
+		_award_trait(cm, "gambler", events)
+
+	# Trusted Veteran: high loyalty + experienced + 60+ days
+	if not cm.has_trait("trusted_veteran"):
+		var days_aboard_tv: int = GameManager.day_count - cm.hired_day
+		if cm.loyalty >= 70.0 and cm.get_growth_label() in ["Veteran", "Expert"] and days_aboard_tv >= 60:
+			_award_trait(cm, "trusted_veteran", events)
 
 	return events
 
