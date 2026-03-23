@@ -8,8 +8,18 @@ extends Control
 
 func _ready() -> void:
 	# Check if a save exists to enable/disable Load Game
-	load_game_button.disabled = not DatabaseManager.has_save()
+	var has_save: bool = DatabaseManager.has_save()
+	load_game_button.disabled = not has_save
 	version_label.text = "v0.1.0 — Phase 1"
+
+	if has_save:
+		var save: Dictionary = DatabaseManager.load_save()
+		if not save.is_empty():
+			var hardcore: bool = bool(save.get("hardcore_hull", 0))
+			var day: int = save.get("day_count", 1)
+			var name_str: String = save.get("captain_name", "Unknown")
+			var hc_tag: String = " [Hardcore]" if hardcore else ""
+			load_game_button.text = "Continue — Cpt. %s, Day %d%s" % [name_str, day, hc_tag]
 
 	new_game_button.pressed.connect(_on_new_game_pressed)
 	load_game_button.pressed.connect(_on_load_game_pressed)

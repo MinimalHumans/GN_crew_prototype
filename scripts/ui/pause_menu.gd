@@ -507,6 +507,7 @@ func _debug_dump_economy() -> void:
 		GameManager.fuel_current, GameManager.fuel_max])
 	print("Food: %.0f | Crew: %d/%d" % [GameManager.food_supply, GameManager.get_crew_roster().size(), GameManager.crew_max])
 	print("Win triggered: %s" % str(GameManager.win_triggered))
+	print("Hardcore hull: %s" % str(GameManager.hardcore_hull))
 	print("======================")
 	_show_feedback("Economy report dumped to console.", SUCCESS_COLOR)
 

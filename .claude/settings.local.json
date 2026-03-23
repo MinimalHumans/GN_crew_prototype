@@ -11,7 +11,9 @@
       "Bash(python -c \":*)",
       "Bash(powershell -Command \"\\(Select-String -Path ''D:\\\\06_GitHub\\\\Godot\\\\GN_crew_prototype\\\\scripts\\\\data\\\\text_templates.gd'' -Pattern ''TRAVEL_TEXT'' -Context 0,50\\).Context.PostContext | Select-String ''^\\\\s+\\\\x22'' | Measure-Object | Select-Object -ExpandProperty Count\")",
       "Bash(powershell -Command \"\\(Select-String -Path ''D:\\\\06_GitHub\\\\Godot\\\\GN_crew_prototype\\\\scripts\\\\data\\\\crew_event_templates.gd'' -Pattern ''SLICE_OF_LIFE'' -Context 0,50\\).Context.PostContext | Select-String ''^\\\\s+\\\\x22'' | Measure-Object | Select-Object -ExpandProperty Count\")",
-      "Bash(python build_flavor_db.py)"
+      "Bash(python build_flavor_db.py)",
+      "Bash(grep -n \"func accept_mission\\\\|func dismiss\\\\|func get_crew_count\\\\|crew_max\\\\|func _resolve_mission\" /d/06_GitHub/Godot/GN_crew_prototype/scripts/**/*.gd)",
+      "Bash(grep -n \"hull\\\\|fuel\" /d/06_GitHub/Godot/GN_crew_prototype/scripts/systems/*.gd)"
     ]
   }
 }

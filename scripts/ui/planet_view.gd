@@ -131,7 +131,10 @@ func _update_ship_info() -> void:
 
 	hull_bar.max_value = GameManager.hull_max
 	hull_bar.value = GameManager.hull_current
-	hull_value_label.text = "%d/%d" % [GameManager.hull_current, GameManager.hull_max]
+	if GameManager.hardcore_hull:
+		hull_value_label.text = "%d/%d [HC]" % [GameManager.hull_current, GameManager.hull_max]
+	else:
+		hull_value_label.text = "%d/%d" % [GameManager.hull_current, GameManager.hull_max]
 
 	fuel_bar.max_value = GameManager.fuel_max
 	fuel_bar.value = GameManager.fuel_current
@@ -173,6 +176,20 @@ func _build_service_buttons() -> void:
 		btn.pressed.connect(_on_service_pressed.bind(service_key))
 		service_container.add_child(btn)
 
+	# Emergency beacon — shown only when truly stuck
+	var total_cargo: int = GameManager.get_total_cargo()
+	var can_afford_fuel: bool = GameManager.credits >= _get_cheapest_fuel_cost()
+	var has_cargo_to_sell: bool = total_cargo > 0
+
+	if GameManager.fuel_current < GameManager.get_fuel_cost_per_jump() and not can_afford_fuel and not has_cargo_to_sell:
+		var emergency_btn: Button = Button.new()
+		emergency_btn.text = "Emergency Beacon (costs 3 days)"
+		emergency_btn.custom_minimum_size = Vector2(0, 48)
+		emergency_btn.add_theme_font_size_override("font_size", 18)
+		emergency_btn.add_theme_color_override("font_color", Color("#C0392B"))
+		emergency_btn.pressed.connect(_on_emergency_beacon)
+		service_container.add_child(emergency_btn)
+
 	# Depart button — always available
 	var spacer: Control = Control.new()
 	spacer.custom_minimum_size = Vector2(0, 12)
@@ -184,6 +201,20 @@ func _build_service_buttons() -> void:
 	depart_btn.add_theme_font_size_override("font_size", 27)
 	depart_btn.pressed.connect(_on_depart_pressed)
 	service_container.add_child(depart_btn)
+
+	# Fresh start option — only shown when crewless on crew-capable ship
+	if GameManager.get_crew_count() == 0 and GameManager.crew_max > 0:
+		var fresh_spacer: Control = Control.new()
+		fresh_spacer.custom_minimum_size = Vector2(0, 6)
+		service_container.add_child(fresh_spacer)
+
+		var fresh_btn: Button = Button.new()
+		fresh_btn.text = "Fresh Start..."
+		fresh_btn.custom_minimum_size = Vector2(0, 48)
+		fresh_btn.add_theme_font_size_override("font_size", 21)
+		fresh_btn.add_theme_color_override("font_color", Color("#718096"))
+		fresh_btn.pressed.connect(_show_fresh_start_confirm)
+		service_container.add_child(fresh_btn)
 
 
 func _on_service_pressed(service_key: String) -> void:
@@ -420,6 +451,10 @@ func _check_mission_completions() -> void:
 		_update_player_info()
 		_update_ship_info()
 
+		# Check for hull destruction from mission damage
+		if GameManager.hull_current <= 0 and GameManager.hardcore_hull:
+			_handle_planet_destruction()
+
 
 func _display_mission_result(result: Dictionary) -> void:
 	var mission: Dictionary = result.mission
@@ -565,6 +600,10 @@ func _on_level_up(new_level: int) -> void:
 
 
 func _on_depart_pressed() -> void:
+	# Block departure with zero fuel
+	if GameManager.fuel_current <= 0.0:
+		_append_log("[color=#C0392B]Cannot depart — fuel tanks are empty. Visit the shop to refuel.[/color]")
+		return
 	GameManager.save_game()
 	GameManager.change_scene("res://scenes/travel/node_map.tscn")
 
@@ -579,6 +618,15 @@ func _log_arrival() -> void:
 	var arrival: String = TextTemplates.get_arrival_text(planet.name)
 	_append_log("[color=#4A90D9]%s[/color]" % arrival)
 	_append_log("[color=#718096]%s[/color]" % planet.description)
+
+	# Fuel warning on arrival
+	if GameManager.fuel_current <= 0.0:
+		_append_log("")
+		_append_log("[color=#C0392B]Fuel tanks are empty. You cannot depart without refueling.[/color]")
+		if GameManager.credits < 10:
+			_append_log("[color=#718096]Sell cargo at the shop to raise credits, or wait for your next crew payout.[/color]")
+	elif GameManager.fuel_current < GameManager.get_fuel_cost_per_jump():
+		_append_log("[color=#E67E22]Fuel is critically low. Refuel before departing.[/color]")
 
 	# Phase 3: Faction access arrival flavor text
 	_log_faction_access(planet)
@@ -726,3 +774,135 @@ func _on_planet_decision_choice(choice: int) -> void:
 	_append_log("[color=#F7FAFC]  → %s[/color]" % result_text)
 	_pending_decision = {}
 	_update_ship_info()
+
+
+# === LOSE STATES (Phase 9) ===
+
+func _show_fresh_start_confirm() -> void:
+	_clear_service_area()
+	service_header.text = "FRESH START"
+
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 18)
+
+	var msg: Label = Label.new()
+	msg.text = "Your journey has reached a crossroads. Without crew, the difficult missions that pay well are beyond reach.\n\nYou can start a new game with a clean slate, or continue here — recruiting new crew at the next station."
+	msg.add_theme_font_size_override("font_size", 21)
+	msg.add_theme_color_override("font_color", Color("#F7FAFC"))
+	msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(msg)
+
+	# Option 1: New game
+	var new_btn: Button = Button.new()
+	new_btn.text = "Start New Game"
+	new_btn.custom_minimum_size = Vector2(0, 54)
+	new_btn.add_theme_font_size_override("font_size", 24)
+	new_btn.pressed.connect(func() -> void:
+		GameManager.save_game()
+		GameManager.is_game_active = false
+		get_tree().change_scene_to_file("res://scenes/ui/new_game.tscn")
+	)
+	vbox.add_child(new_btn)
+
+	# Option 2: Keep playing
+	var continue_btn: Button = Button.new()
+	continue_btn.text = "Keep Going — I'll Find New Crew"
+	continue_btn.custom_minimum_size = Vector2(0, 54)
+	continue_btn.add_theme_font_size_override("font_size", 24)
+	continue_btn.pressed.connect(_show_services)
+	vbox.add_child(continue_btn)
+
+	service_container.add_child(vbox)
+
+
+func _handle_planet_destruction() -> void:
+	## Handles ship destruction while docked (from mission hull damage).
+	_clear_service_area()
+	service_header.text = "SHIP DESTROYED"
+
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 18)
+
+	var msg: RichTextLabel = RichTextLabel.new()
+	msg.bbcode_enabled = true
+	msg.fit_content = true
+	msg.scroll_active = false
+	msg.text = "[color=#C0392B][b]The damage from the mission was worse than anyone realized.[/b]\n\nThe ship's structural integrity gives out at dock. The crew evacuates in time, but the ship is gone. Captain %s's journey ends here.[/color]" % GameManager.captain_name
+	vbox.add_child(msg)
+
+	var stats: Label = Label.new()
+	stats.text = "Days survived: %d  |  Credits earned: %d  |  Level: %d" % [
+		GameManager.day_count, GameManager.total_credits_earned, GameManager.captain_level]
+	stats.add_theme_font_size_override("font_size", 21)
+	stats.add_theme_color_override("font_color", Color("#718096"))
+	stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(stats)
+
+	var new_game_btn: Button = Button.new()
+	new_game_btn.text = "Start New Game"
+	new_game_btn.custom_minimum_size = Vector2(0, 66)
+	new_game_btn.add_theme_font_size_override("font_size", 27)
+	new_game_btn.pressed.connect(func() -> void:
+		GameManager.is_game_active = false
+		get_tree().change_scene_to_file("res://scenes/ui/new_game.tscn")
+	)
+	vbox.add_child(new_game_btn)
+
+	var menu_btn: Button = Button.new()
+	menu_btn.text = "Main Menu"
+	menu_btn.custom_minimum_size = Vector2(0, 54)
+	menu_btn.add_theme_font_size_override("font_size", 21)
+	menu_btn.pressed.connect(func() -> void:
+		GameManager.is_game_active = false
+		get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
+	)
+	vbox.add_child(menu_btn)
+
+	service_container.add_child(vbox)
+
+
+func _get_cheapest_fuel_cost() -> int:
+	## Returns the cost of 1 unit of fuel at this planet.
+	var prices: Array = DatabaseManager.get_planet_prices(GameManager.current_planet_id)
+	for p: Dictionary in prices:
+		if p.commodity_id == 2:  # Fuel
+			return p.current_buy
+	return 12  # Fallback
+
+
+func _on_emergency_beacon() -> void:
+	## Free emergency refuel — costs 3 days, morale hit, no credits.
+	GameManager.advance_docked_day(3)
+
+	# Enough fuel for the cheapest route from this planet
+	var routes: Array = DatabaseManager.get_routes_from(GameManager.current_planet_id)
+	var min_jumps: int = 99
+	for route: Dictionary in routes:
+		if route.jumps < min_jumps:
+			min_jumps = route.jumps
+	var emergency_fuel: float = float(min_jumps + 1) * GameManager.get_fuel_cost_per_jump()
+	GameManager.fuel_current = minf(GameManager.fuel_max, GameManager.fuel_current + emergency_fuel)
+	DatabaseManager.update_ship(GameManager.current_ship_id, {"fuel_current": GameManager.fuel_current})
+	EventBus.fuel_changed.emit(GameManager.fuel_current, GameManager.fuel_max)
+
+	_append_log("")
+	_append_log("[color=#E67E22]You activate the emergency beacon. It takes three days for a salvage crew to respond.[/color]")
+	_append_log("[color=#E67E22]They siphon enough fuel for the nearest jump — %.0f units — and leave without a word. The indignity stings.[/color]" % emergency_fuel)
+
+	# Crew morale hit
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	for cm: CrewMember in roster:
+		cm.morale = maxf(0.0, cm.morale - 8.0)
+		cm.loyalty = maxf(0.0, cm.loyalty - 3.0)
+		DatabaseManager.update_crew_member(cm.id, {
+			"morale": cm.morale,
+			"loyalty": cm.loyalty,
+		})
+	if not roster.is_empty():
+		_append_log("[color=#555B66]  Crew morale and loyalty dropped. Three days lost.[/color]")
+	else:
+		_append_log("[color=#555B66]  Three days lost waiting for rescue.[/color]")
+
+	GameManager.save_game()
+	_update_ship_info()
+	_build_service_buttons()  # Rebuild to remove emergency button

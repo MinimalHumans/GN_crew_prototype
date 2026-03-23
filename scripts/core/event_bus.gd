@@ -98,6 +98,10 @@ signal underpaid_departure(crew_id: int, crew_name: String)
 # === WIN STATE (Phase 6) ===
 signal win_condition_reached(total_earned: int)
 
+# === LOSE STATES (Phase 9) ===
+signal ship_destroyed()
+signal crewless_state_entered()
+
 # === UI ===
 signal message_logged(text: String, color: Color)
 signal scene_change_requested(scene_path: String)

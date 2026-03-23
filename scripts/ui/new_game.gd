@@ -19,6 +19,7 @@ const CAPTAIN_NAMES: PackedStringArray = [
 @onready var back_button: Button = $MarginContainer/VBoxContainer/BackButton
 
 var _use_custom_name: bool = false
+var hardcore_check: CheckBox
 
 
 # === INITIALIZATION ===
@@ -26,6 +27,7 @@ var _use_custom_name: bool = false
 func _ready() -> void:
 	_populate_name_list()
 	_setup_debug_panel()
+	_build_difficulty_section()
 
 	# Connect signals
 	name_option.item_selected.connect(_on_name_selected)
@@ -63,6 +65,35 @@ func _setup_debug_panel() -> void:
 	ship_option.add_item("Skiff (Starter)")
 	ship_option.add_item("Corvette (Medium)")
 	ship_option.add_item("Frigate (Large)")
+
+
+func _build_difficulty_section() -> void:
+	## Adds the difficulty options between the name section and debug section.
+	var diff_section: VBoxContainer = VBoxContainer.new()
+	diff_section.add_theme_constant_override("separation", 9)
+
+	var diff_label: Label = Label.new()
+	diff_label.text = "Difficulty"
+	diff_label.add_theme_font_size_override("font_size", 24)
+	diff_section.add_child(diff_label)
+
+	hardcore_check = CheckBox.new()
+	hardcore_check.text = "Hull Destruction — Ship can be destroyed at 0 hull (permadeath)"
+	hardcore_check.add_theme_font_size_override("font_size", 18)
+	hardcore_check.add_theme_color_override("font_color", Color("#E67E22"))
+	diff_section.add_child(hardcore_check)
+
+	var hint: Label = Label.new()
+	hint.text = "Off by default. When enabled, hull reaching 0 ends the game."
+	hint.add_theme_font_size_override("font_size", 16)
+	hint.add_theme_color_override("font_color", Color("#718096"))
+	diff_section.add_child(hint)
+
+	# Insert before the debug section
+	var parent: VBoxContainer = $MarginContainer/VBoxContainer
+	var debug_idx: int = $MarginContainer/VBoxContainer/DebugSection.get_index()
+	parent.add_child(diff_section)
+	parent.move_child(diff_section, debug_idx)
 
 
 # === SIGNAL HANDLERS ===
@@ -110,6 +141,11 @@ func _on_start_pressed() -> void:
 			DatabaseManager.delete_save(old_save.id)
 
 	GameManager.start_new_game(chosen_name, starting_credits, starting_level)
+
+	# Apply difficulty settings
+	if hardcore_check and hardcore_check.button_pressed:
+		GameManager.hardcore_hull = true
+		DatabaseManager.update_save_state(GameManager.save_id, {"hardcore_hull": 1})
 
 	# Handle debug ship override
 	var ship_index: int = ship_option.selected

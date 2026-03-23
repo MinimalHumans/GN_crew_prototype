@@ -103,6 +103,9 @@ var total_credits_earned: int = 0
 var total_credits_spent: int = 0
 var win_triggered: bool = false
 
+# Phase 9: Difficulty settings (persisted in save_state)
+var hardcore_hull: bool = false
+
 # Recruitment candidate cache — cleared on departure
 var cached_recruitment_candidates: Array = []  # Array of CrewMember
 var cached_recruitment_planet_id: int = -1
@@ -180,6 +183,7 @@ func _load_state_from_db() -> void:
 	total_credits_earned = save_data.get("total_credits_earned", 0)
 	total_credits_spent = save_data.get("total_credits_spent", 0)
 	win_triggered = bool(save_data.get("win_triggered", 0))
+	hardcore_hull = bool(save_data.get("hardcore_hull", 0))
 
 	# Load captain stats
 	var stats: Dictionary = DatabaseManager.get_captain_stats(save_id)
@@ -234,6 +238,7 @@ func save_game() -> void:
 		"total_credits_earned": total_credits_earned,
 		"total_credits_spent": total_credits_spent,
 		"win_triggered": 1 if win_triggered else 0,
+		"hardcore_hull": 1 if hardcore_hull else 0,
 	})
 
 	DatabaseManager.update_captain_stats(save_id, {
@@ -700,11 +705,53 @@ func repair_hull(amount: int, cost: int) -> bool:
 	return true
 
 
+func apply_hull_damage(amount: int) -> Dictionary:
+	## Applies hull damage and checks for destruction.
+	## Returns {destroyed: bool, hull_remaining: int}
+	if amount <= 0:
+		return {"destroyed": false, "hull_remaining": hull_current}
+
+	if hardcore_hull:
+		hull_current = maxi(0, hull_current - amount)
+	else:
+		hull_current = maxi(1, hull_current - amount)
+
+	if current_ship_id >= 0:
+		DatabaseManager.update_ship(current_ship_id, {"hull_current": hull_current})
+	EventBus.hull_changed.emit(hull_current, hull_max)
+
+	if hull_current <= 0 and hardcore_hull:
+		EventBus.ship_destroyed.emit()
+		return {"destroyed": true, "hull_remaining": 0}
+
+	return {"destroyed": false, "hull_remaining": hull_current}
+
+
+func _check_crewless_state() -> void:
+	## Called after any crew departure/death. Checks if captain is now crewless
+	## on a crew-capable ship and notifies the player.
+	if get_crew_count() > 0:
+		return
+	if crew_max <= 0:
+		return  # Skiff — no crew slots, not a lose state
+
+	EventBus.crewless_state_entered.emit()
+	EventBus.message_logged.emit("", Color.WHITE)
+	EventBus.message_logged.emit("[color=#C0392B]═══════════════════════════════════════[/color]", Color.WHITE)
+	EventBus.message_logged.emit("[color=#C0392B]Your crew is gone. The ship feels empty.[/color]", Color.WHITE)
+	EventBus.message_logged.emit("[color=#718096]Without crew, you cannot take on difficult missions (3+ stars).[/color]", Color.WHITE)
+	EventBus.message_logged.emit("[color=#718096]Visit a Recruitment Station to rebuild, or consider a fresh start.[/color]", Color.WHITE)
+	EventBus.message_logged.emit("[color=#C0392B]═══════════════════════════════════════[/color]", Color.WHITE)
+
+
 # === MISSIONS ===
 
 func accept_mission(mission_data: Dictionary) -> bool:
-	## Accepts a mission from the board. Returns false if at max capacity.
+	## Accepts a mission from the board. Returns false if at max capacity or restricted.
 	if DatabaseManager.get_active_mission_count(save_id) >= MAX_ACTIVE_MISSIONS:
+		return false
+	# Soft lose state: solo captain can't accept difficulty 3+ missions
+	if get_crew_count() == 0 and crew_max > 0 and mission_data.get("difficulty", 1) >= 3:
 		return false
 	var mission_id: int = DatabaseManager.accept_mission(save_id, mission_data)
 	if mission_id < 0:
@@ -819,9 +866,7 @@ func _resolve_mission(mission: Dictionary) -> Dictionary:
 	if xp_reward > 0:
 		add_xp(xp_reward)
 	if hull_damage > 0:
-		hull_current = maxi(1, hull_current - hull_damage)
-		DatabaseManager.update_ship(current_ship_id, {"hull_current": hull_current})
-		EventBus.hull_changed.emit(hull_current, hull_max)
+		apply_hull_damage(hull_damage)
 
 	EventBus.mission_completed.emit(mission.id, outcome.tier != "critical_failure")
 
@@ -1057,6 +1102,7 @@ func dismiss_crew(crew_id: int) -> void:
 	EventBus.crew_dismissed.emit(crew_id, crew_name)
 	EventBus.crew_changed.emit()
 	save_game()
+	_check_crewless_state()
 
 
 func dismiss_crew_with_legacy(crew_id: int, departure_type: String) -> Array[String]:
@@ -1085,6 +1131,7 @@ func dismiss_crew_with_legacy(crew_id: int, departure_type: String) -> Array[Str
 		EventBus.crew_dismissed.emit(crew_id, crew_name)
 	EventBus.crew_changed.emit()
 	save_game()
+	_check_crewless_state()
 
 	return legacy_events
 

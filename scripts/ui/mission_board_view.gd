@@ -240,15 +240,25 @@ func _make_mission_card(mission: Dictionary) -> PanelContainer:
 	accept_btn.custom_minimum_size = Vector2(120, 32)
 
 	var active_count: int = DatabaseManager.get_active_mission_count(GameManager.save_id)
+	var crewless_restricted: bool = GameManager.get_crew_count() == 0 and GameManager.crew_max > 0 and mission.difficulty >= 3
 	if active_count >= GameManager.MAX_ACTIVE_MISSIONS:
 		accept_btn.disabled = true
 		accept_btn.tooltip_text = "Max %d active missions" % GameManager.MAX_ACTIVE_MISSIONS
+	elif crewless_restricted:
+		accept_btn.disabled = true
+		accept_btn.tooltip_text = "Too dangerous without crew"
 	else:
 		accept_btn.pressed.connect(_on_accept_mission.bind(mission))
 
 	btn_row.add_child(accept_btn)
 
-	if active_count >= GameManager.MAX_ACTIVE_MISSIONS:
+	if crewless_restricted:
+		var restrict_lbl: Label = Label.new()
+		restrict_lbl.text = "Requires crew for this difficulty"
+		restrict_lbl.add_theme_font_size_override("font_size", 11)
+		restrict_lbl.add_theme_color_override("font_color", Color(COLOR_BAD))
+		btn_row.add_child(restrict_lbl)
+	elif active_count >= GameManager.MAX_ACTIVE_MISSIONS:
 		var cap_lbl: Label = Label.new()
 		cap_lbl.text = "Mission log full (%d/%d)" % [active_count, GameManager.MAX_ACTIVE_MISSIONS]
 		cap_lbl.add_theme_font_size_override("font_size", 11)

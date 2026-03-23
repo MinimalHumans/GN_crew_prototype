@@ -2634,7 +2634,11 @@ static func process_crew_death(cm: CrewMember, cause: String,
 	DatabaseManager.delete_crew_relationships(cm.id)
 
 	EventBus.crew_died.emit(cm.id, cm.crew_name, cause)
+	EventBus.crew_changed.emit()
 	events.append("[color=#C0392B]%s[/color]" % CrewEventTemplates.get_mourning_crew_text(cm.crew_name))
+
+	# Check if captain is now crewless
+	GameManager._check_crewless_state()
 
 	return events
 
@@ -3190,6 +3194,9 @@ static func check_prosperity_departure(roster: Array[CrewMember]) -> Array[Strin
 
 		events.append("[color=#555B66]  ↳ A bittersweet departure. The crew wishes them well.[/color]")
 
+	# Check if captain is now crewless
+	GameManager._check_crewless_state()
+
 	return events
 
 
@@ -3285,6 +3292,9 @@ static func check_underpaid_departure(roster: Array[CrewMember]) -> Array[String
 
 		# Minimal crew reaction — they understand
 		events.append("[color=#555B66]  ↳ The crew understands. Better opportunities elsewhere.[/color]")
+
+	# Check if captain is now crewless
+	GameManager._check_crewless_state()
 
 	return events
 
@@ -3553,6 +3563,9 @@ static func check_leave_return(roster: Array[CrewMember]) -> Array[String]:
 						})
 						events.append("[color=#718096]%s noticed %s never came back. They're not happy about it.[/color]" % [
 							other_row.get("name", ""), crew_name])
+
+	# Check if captain is now crewless
+	GameManager._check_crewless_state()
 
 	return events
 
@@ -3938,5 +3951,6 @@ static func resolve_trouble_ashore(event_data: Dictionary, choice: int) -> Array
 			})
 			EventBus.legacy_created.emit(crew_name, "trouble_ashore")
 			EventBus.crew_changed.emit()
+			GameManager._check_crewless_state()
 
 	return events

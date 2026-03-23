@@ -332,10 +332,13 @@ func _on_approach_selected(approach_idx: int) -> void:
 	# Hull damage on failure
 	if result.tier in ["failure", "critical_failure"]:
 		var hull_dmg: int = randi_range(5, 15) if result.tier == "failure" else randi_range(10, 25)
-		GameManager.hull_current = maxi(1, GameManager.hull_current - hull_dmg)
-		DatabaseManager.update_ship(GameManager.current_ship_id, {"hull_current": GameManager.hull_current})
-		EventBus.hull_changed.emit(GameManager.hull_current, GameManager.hull_max)
+		var hull_result: Dictionary = GameManager.apply_hull_damage(hull_dmg)
 		_append_log("[color=#C0392B]Hull damage: -%d HP[/color]" % hull_dmg)
+
+		if hull_result.destroyed:
+			_handle_ship_destroyed()
+			return
+
 		if GameManager.hull_current < GameManager.hull_max / 2:
 			_append_log(CrewEventTemplates.get_service_suggestion("hull_damaged"))
 
@@ -653,22 +656,25 @@ func _on_decision_choice(choice: int) -> void:
 
 func _update_status() -> void:
 	var crew_count: int = GameManager.get_crew_count()
+	var hardcore_tag: String = " [HARDCORE]" if GameManager.hardcore_hull else ""
 	if crew_count > 0:
 		var morale_word: String = GameManager.get_ship_morale_word()
 		var morale_color: String = GameManager.get_ship_morale_color()
-		status_label.text = "Fuel: %.0f/%.0f  |  Food: %s  |  Hull: %d/%d  |  Day %d  |  Morale: %s" % [
+		status_label.text = "Fuel: %.0f/%.0f  |  Food: %s  |  Hull: %d/%d  |  Day %d  |  Morale: %s%s" % [
 			GameManager.fuel_current, GameManager.fuel_max,
 			GameManager.get_food_days_remaining(),
 			GameManager.hull_current, GameManager.hull_max,
 			GameManager.day_count,
 			morale_word,
+			hardcore_tag,
 		]
 	else:
-		status_label.text = "Fuel: %.0f/%.0f  |  Food: %s  |  Hull: %d/%d  |  Day %d" % [
+		status_label.text = "Fuel: %.0f/%.0f  |  Food: %s  |  Hull: %d/%d  |  Day %d%s" % [
 			GameManager.fuel_current, GameManager.fuel_max,
 			GameManager.get_food_days_remaining(),
 			GameManager.hull_current, GameManager.hull_max,
 			GameManager.day_count,
+			hardcore_tag,
 		]
 
 
@@ -690,3 +696,99 @@ func _get_tier_color(tier: String) -> String:
 
 func _append_log(text: String) -> void:
 	travel_log.append_text(text + "\n")
+
+
+# === SHIP DESTRUCTION (Phase 9) ===
+
+func _handle_ship_destroyed() -> void:
+	## Handles ship reaching 0 hull in hardcore mode.
+	_journey_complete = false
+	continue_button.disabled = true
+
+	# Clean up any pending encounter/decision UI
+	if _encounter_container != null:
+		_encounter_container.queue_free()
+		_encounter_container = null
+	if _decision_container != null:
+		_decision_container.queue_free()
+		_decision_container = null
+
+	_append_log("")
+	_append_log("[color=#C0392B]═══════════════════════════════════════[/color]")
+	_append_log("[color=#C0392B][b]SHIP DESTROYED[/b][/color]")
+	_append_log("")
+	_append_log("[color=#C0392B]The hull gives way. Warning klaxons scream through corridors[/color]")
+	_append_log("[color=#C0392B]that are already filling with smoke. Emergency systems fail[/color]")
+	_append_log("[color=#C0392B]one by one. The last thing you see is the stars through the[/color]")
+	_append_log("[color=#C0392B]breach — cold, indifferent, beautiful.[/color]")
+	_append_log("")
+
+	# Crew status
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	if not roster.is_empty():
+		_append_log("[color=#718096]Escape pods launched. The crew may survive — but this ship will not.[/color]")
+		var crew_names: Array[String] = []
+		for cm: CrewMember in roster:
+			crew_names.append(cm.crew_name)
+		_append_log("[color=#718096]Crew lost: %s[/color]" % ", ".join(crew_names))
+
+	_append_log("")
+	_append_log("[color=#C0392B]Captain %s's journey ends here.[/color]" % GameManager.captain_name)
+	_append_log("[color=#C0392B]═══════════════════════════════════════[/color]")
+
+	# Show game over options
+	_show_game_over_options()
+
+
+func _show_game_over_options() -> void:
+	var options_container: VBoxContainer = VBoxContainer.new()
+	options_container.add_theme_constant_override("separation", 12)
+
+	# Statistics summary
+	var stats_lbl: Label = Label.new()
+	stats_lbl.text = "Days survived: %d  |  Credits earned: %d  |  Level: %d" % [
+		GameManager.day_count, GameManager.total_credits_earned, GameManager.captain_level]
+	stats_lbl.add_theme_font_size_override("font_size", 21)
+	stats_lbl.add_theme_color_override("font_color", Color("#718096"))
+	stats_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	options_container.add_child(stats_lbl)
+
+	# Legacy summary
+	var legacies: Array = DatabaseManager.get_crew_legacies(GameManager.save_id)
+	if not legacies.is_empty():
+		var legacy_lbl: Label = Label.new()
+		legacy_lbl.text = "Crew remembered: %d" % legacies.size()
+		legacy_lbl.add_theme_font_size_override("font_size", 18)
+		legacy_lbl.add_theme_color_override("font_color", Color("#718096"))
+		legacy_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		options_container.add_child(legacy_lbl)
+
+	var spacer: Control = Control.new()
+	spacer.custom_minimum_size = Vector2(0, 18)
+	options_container.add_child(spacer)
+
+	# New game button
+	var new_game_btn: Button = Button.new()
+	new_game_btn.text = "Start New Game"
+	new_game_btn.custom_minimum_size = Vector2(0, 66)
+	new_game_btn.add_theme_font_size_override("font_size", 27)
+	new_game_btn.pressed.connect(func() -> void:
+		GameManager.is_game_active = false
+		get_tree().change_scene_to_file("res://scenes/ui/new_game.tscn")
+	)
+	options_container.add_child(new_game_btn)
+
+	# Main menu button
+	var menu_btn: Button = Button.new()
+	menu_btn.text = "Main Menu"
+	menu_btn.custom_minimum_size = Vector2(0, 54)
+	menu_btn.add_theme_font_size_override("font_size", 21)
+	menu_btn.add_theme_color_override("font_color", Color("#718096"))
+	menu_btn.pressed.connect(func() -> void:
+		GameManager.is_game_active = false
+		get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
+	)
+	options_container.add_child(menu_btn)
+
+	continue_button.get_parent().add_child(options_container)
+	continue_button.visible = false

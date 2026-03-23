@@ -834,6 +834,8 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("crew_members", "prosperity_checked", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "last_payout_day", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "credits_since_last_payout", "INTEGER DEFAULT 0")
+	# Phase 9: Difficulty settings
+	_add_column_if_missing("save_state", "hardcore_hull", "INTEGER DEFAULT 0")
 	# Seed Phase 3 planet flags
 	_seed_phase3_planet_flags()
 	# Seed Phase 5.3 hospital flags

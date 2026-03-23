@@ -223,7 +223,17 @@ func _build_mission_card(mission: Dictionary, index: int) -> void:
 	accept_btn.custom_minimum_size = Vector2(200, 42)
 	accept_btn.add_theme_font_size_override("font_size", 16)
 	var idx: int = index
-	accept_btn.pressed.connect(func() -> void: _on_accept_black_market(idx))
+	# Soft lose state: disable difficulty 3+ for crewless captains with crew-capable ships
+	if GameManager.get_crew_count() == 0 and GameManager.crew_max > 0 and mission.difficulty >= 3:
+		accept_btn.disabled = true
+		accept_btn.tooltip_text = "Too dangerous without crew"
+		var restrict_lbl: Label = Label.new()
+		restrict_lbl.text = "Requires crew for this difficulty"
+		restrict_lbl.add_theme_font_size_override("font_size", 11)
+		restrict_lbl.add_theme_color_override("font_color", Color(COLOR_BAD))
+		card.add_child(restrict_lbl)
+	else:
+		accept_btn.pressed.connect(func() -> void: _on_accept_black_market(idx))
 	card.add_child(accept_btn)
 
 	card.add_child(HSeparator.new())
