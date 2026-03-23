@@ -827,6 +827,8 @@ func _migrate_schema() -> void:
 	_seed_phase3_planet_flags()
 	# Seed Phase 5.3 hospital flags
 	_seed_phase5_hospital_flags()
+	# Phase 5 (Shore Leave): update planet service profiles
+	_update_planet_services()
 
 
 func _seed_phase3_planet_flags() -> void:
@@ -840,6 +842,31 @@ func _seed_phase5_hospital_flags() -> void:
 	## Sets has_hospital on Haven (id=1), Korrath Prime (id=4), Lirien (id=7).
 	for pid: int in [1, 4, 7]:
 		db.query_with_bindings("UPDATE planets SET has_hospital = 1 WHERE id = ?", [pid])
+
+
+func _update_planet_services() -> void:
+	## Adds new shore leave services to planet service profiles.
+	## Safe to call multiple times — overwrites with full service list.
+	var service_updates: Dictionary = {
+		1: '["mission_board","shop","recruitment","hospital","shipyard","cantina","training","wellness","cultural"]',
+		2: '["mission_board","shop","cantina"]',
+		3: '["mission_board","shop","cantina"]',
+		4: '["mission_board","shop","recruitment","hospital","shipyard","cantina","training","wellness","cultural"]',
+		5: '["mission_board","shop","cantina","training"]',
+		6: '["mission_board","recruitment","cantina","training"]',
+		7: '["mission_board","shop","recruitment","hospital","cantina","training","wellness","cultural"]',
+		8: '["mission_board","shop","cantina","cultural"]',
+		9: '["mission_board","cantina"]',
+		10: '["mission_board","shop","recruitment","shipyard","cantina","training","cultural"]',
+		11: '["mission_board","cantina","black_market"]',
+		12: '["mission_board","shop","cantina","casino","black_market"]',
+	}
+
+	for pid: int in service_updates:
+		db.query_with_bindings(
+			"UPDATE planets SET services = ? WHERE id = ?",
+			[service_updates[pid], pid]
+		)
 
 
 func _add_column_if_missing(table_name: String, column_name: String, column_def: String) -> void:

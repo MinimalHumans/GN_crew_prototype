@@ -95,6 +95,9 @@ var combat_morale_resistance: float = 0.0
 var last_payout_day: int = 0
 var credits_since_last_payout: int = 0
 
+# Shore leave tracking (in-memory, resets per visit)
+var docked_days_this_visit: int = 0
+
 # Phase 6: Economy tracking (persisted in save_state)
 var total_credits_earned: int = 0
 var total_credits_spent: int = 0
@@ -273,6 +276,48 @@ func spend_credits(amount: int) -> bool:
 	return true
 
 
+func advance_docked_day(days: int = 1) -> void:
+	## Advances the day counter while docked. Used by time-costing services.
+	for i: int in range(days):
+		docked_days_this_visit += 1
+		day_count += 1
+		EventBus.day_advanced.emit(day_count)
+
+	# Tick crew fatigue recovery for docked days
+	var roster: Array[CrewMember] = get_crew_roster()
+	for cm: CrewMember in roster:
+		cm.fatigue = maxf(0.0, cm.fatigue - 5.0 * float(days))
+		cm.docked_ticks += days
+		DatabaseManager.update_crew_member(cm.id, {
+			"fatigue": cm.fatigue,
+			"docked_ticks": cm.docked_ticks,
+		})
+
+	# Tick promises
+	for i: int in range(days):
+		var expired: Array[Dictionary] = tick_promises()
+		for promise: Dictionary in expired:
+			if promise.type == "dock_soon":
+				var crew_data: Dictionary = DatabaseManager.get_crew_member(promise.crew_id)
+				if not crew_data.is_empty() and bool(crew_data.get("is_active", 0)):
+					var new_morale: float = maxf(0.0, crew_data.morale - 15.0)
+					DatabaseManager.update_crew_member(promise.crew_id, {"morale": new_morale})
+
+	# Tick active crew-generated mission timers
+	var active_cgm: Dictionary = DatabaseManager.get_active_crew_generated_mission(save_id)
+	if not active_cgm.is_empty():
+		var remaining: int = active_cgm.get("ticks_remaining", 0) - days
+		DatabaseManager.update_crew_generated_mission(active_cgm.id, {"ticks_remaining": remaining})
+
+	# Check payout while docked
+	if CrewSimulation.check_payout_due():
+		var payout_result: Dictionary = CrewSimulation.process_payout()
+		if not payout_result.crew_payouts.is_empty():
+			EventBus.message_logged.emit(CrewSimulation._format_payout_event(payout_result), Color.WHITE)
+
+	save_game()
+
+
 # === XP & LEVELING ===
 
 func add_xp(amount: int) -> void:
@@ -413,6 +458,7 @@ func begin_travel(destination_id: int) -> void:
 func arrive_at_planet(planet_id: int) -> void:
 	## Called when travel is complete. Updates state and transitions to planet view.
 	current_planet_id = planet_id
+	docked_days_this_visit = 0
 	cached_recruitment_candidates = []
 	cached_recruitment_planet_id = -1
 	DatabaseManager.mark_planet_visited(save_id, planet_id, day_count)

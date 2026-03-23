@@ -3,7 +3,7 @@ extends Control
 ## Left panel: planet visual, player info, ship info.
 ## Right panel: service buttons (or shop/mission board sub-panels), message log.
 
-enum PanelMode { SERVICES, SHOP, MISSION_BOARD, SHIPYARD, RECRUITMENT, SHIP_VIEW, HOSPITAL }
+enum PanelMode { SERVICES, SHOP, MISSION_BOARD, SHIPYARD, RECRUITMENT, SHIP_VIEW, HOSPITAL, CANTINA, TRAINING, WELLNESS, CASINO, CULTURAL, BLACK_MARKET }
 var current_panel: PanelMode = PanelMode.SERVICES
 var _pending_decision: Dictionary = {}
 var _decision_container: VBoxContainer = null
@@ -43,6 +43,12 @@ const SERVICE_DISPLAY: Dictionary = {
 	"recruitment": "Recruitment Station",
 	"hospital": "Hospital",
 	"shipyard": "Shipyard",
+	"cantina": "Cantina",
+	"training": "Training Facility",
+	"wellness": "Wellness Center",
+	"casino": "Casino",
+	"cultural": "Cultural Experience",
+	"black_market": "Black Market",
 }
 
 
@@ -136,7 +142,10 @@ func _update_ship_info() -> void:
 	food_label.text = "Food: %s" % GameManager.get_food_days_remaining()
 	crew_label.text = "Crew: %d / %d" % [GameManager.get_crew_count(), GameManager.crew_max]
 
-	day_label.text = "Day %d" % GameManager.day_count
+	if GameManager.docked_days_this_visit > 0:
+		day_label.text = "Day %d  (Docked: %d)" % [GameManager.day_count, GameManager.docked_days_this_visit]
+	else:
+		day_label.text = "Day %d" % GameManager.day_count
 
 
 # === SERVICE BUTTONS ===
@@ -189,6 +198,18 @@ func _on_service_pressed(service_key: String) -> void:
 			_show_hospital()
 		"shipyard":
 			_show_shipyard()
+		"cantina":
+			_show_cantina()
+		"training":
+			_show_training()
+		"wellness":
+			_show_wellness()
+		"casino":
+			_show_casino()
+		"cultural":
+			_show_cultural()
+		"black_market":
+			_show_black_market()
 		_:
 			_append_log("[color=#718096]%s — not yet implemented.[/color]" % service_key)
 
@@ -259,6 +280,84 @@ func _show_hospital() -> void:
 	hospital.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	service_container.add_child(hospital)
 	current_panel = PanelMode.HOSPITAL
+
+
+func _show_cantina() -> void:
+	_clear_service_area()
+	service_header.text = "CANTINA"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var cantina: CantinaView = CantinaView.new(GameManager.current_planet_id)
+	cantina.back_pressed.connect(_show_services)
+	cantina.log_message.connect(_append_log)
+	cantina.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(cantina)
+	current_panel = PanelMode.CANTINA
+
+
+func _show_training() -> void:
+	_clear_service_area()
+	service_header.text = "TRAINING FACILITY"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var training: TrainingView = TrainingView.new(GameManager.current_planet_id)
+	training.back_pressed.connect(_show_services)
+	training.log_message.connect(_append_log)
+	training.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(training)
+	current_panel = PanelMode.TRAINING
+
+
+func _show_wellness() -> void:
+	_clear_service_area()
+	service_header.text = "WELLNESS CENTER"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var wellness: WellnessView = WellnessView.new(GameManager.current_planet_id)
+	wellness.back_pressed.connect(_show_services)
+	wellness.log_message.connect(_append_log)
+	wellness.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(wellness)
+	current_panel = PanelMode.WELLNESS
+
+
+func _show_casino() -> void:
+	_clear_service_area()
+	service_header.text = "CASINO"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var casino: CasinoView = CasinoView.new(GameManager.current_planet_id)
+	casino.back_pressed.connect(_show_services)
+	casino.log_message.connect(_append_log)
+	casino.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(casino)
+	current_panel = PanelMode.CASINO
+
+
+func _show_cultural() -> void:
+	_clear_service_area()
+	service_header.text = "CULTURAL EXPERIENCE"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var cultural: CulturalView = CulturalView.new(GameManager.current_planet_id)
+	cultural.back_pressed.connect(_show_services)
+	cultural.log_message.connect(_append_log)
+	cultural.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(cultural)
+	current_panel = PanelMode.CULTURAL
+
+
+func _show_black_market() -> void:
+	_clear_service_area()
+	service_header.text = "BLACK MARKET"
+	service_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.size_flags_stretch_ratio = 2.0
+	var black_market: BlackMarketView = BlackMarketView.new(GameManager.current_planet_id)
+	black_market.back_pressed.connect(_show_services)
+	black_market.log_message.connect(_append_log)
+	black_market.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	service_container.add_child(black_market)
+	current_panel = PanelMode.BLACK_MARKET
 
 
 func _show_win_screen() -> void:
