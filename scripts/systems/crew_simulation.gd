@@ -435,6 +435,22 @@ static func tick_planet_arrival() -> Array[String]:
 					"[color=#4CAF50]%s is moved by the visit to %s. It feels like coming home.[/color]" % [cm.crew_name, planet.get("name", "unknown")],
 					{"memory": true})
 
+		# Phase 6C: Character texture — old contacts at specific planets
+		var contact_planet_id: int = (cm.id * 7 + 3) % 12 + 1  # Deterministic 1-12
+		if contact_planet_id == GameManager.current_planet_id and randf() < 0.50:
+			var contact_texts: Array[String] = [
+				"%s spots someone in the crowd and goes still. 'I know them.' They're gone for an hour. Come back quiet." % cm.crew_name,
+				"%s gets a message the moment we dock. Old contact. They step away for a private conversation." % cm.crew_name,
+				"%s knows this place. You can tell by the way they walk through the port — no hesitation, like muscle memory." % cm.crew_name,
+			]
+			events.append("[color=#718096]%s[/color]" % contact_texts[randi() % contact_texts.size()])
+
+		# Phase 6C: Trouble ashore — small chance at port
+		if randf() < 0.02 and cm.wallet > 10.0:
+			var trouble_event: Dictionary = _build_trouble_ashore(cm)
+			if not trouble_event.is_empty():
+				EventBus.decision_event_fired.emit(trouble_event)
+
 		# Phase 5.1: Shared rest bonus for couples
 		var partner_id: int = DatabaseManager.get_partner_id(cm.id)
 		if partner_id >= 0:
@@ -3159,3 +3175,635 @@ static func _generate_underpaid_legacy(cm: CrewMember) -> void:
 	})
 
 	EventBus.legacy_created.emit(cm.crew_name, "underpaid")
+
+
+# === PHASE 6A: TEMPORARY LEAVE ===
+
+# Leave request conditions
+const LEAVE_MIN_DAYS_ABOARD: int = 30
+const LEAVE_MIN_LOYALTY: float = 40.0
+const LEAVE_REQUEST_CHANCE: float = 0.03  # 3% per eligible crew per docked tick
+const LEAVE_DURATION_DAYS: int = 15  # Captain must return within 15 days
+const LEAVE_NOT_RETURN_CHANCE: float = 0.08  # 8% chance of not coming back
+
+# Leave reason templates — determines what happens on return
+const LEAVE_REASONS: Array[Dictionary] = [
+	{
+		"id": "personal_business",
+		"text": "{name} approaches you at the dock. 'Captain, I have some personal business to handle here on {planet}. I need a few days. I'll be ready when you come back through.'",
+		"return_effect": "memory",
+	},
+	{
+		"id": "old_friend",
+		"text": "{name} spots someone in the crowd and freezes. 'Captain — that's someone I haven't seen in years. I need to stay. Just for a while. Come back for me?'",
+		"return_effect": "social_boost",
+	},
+	{
+		"id": "rest_and_recovery",
+		"text": "{name} looks at you with exhausted eyes. 'Captain, I need a real break. Not a night at the cantina — actual time off. Leave me here and pick me up on your next pass.'",
+		"return_effect": "full_rest",
+	},
+	{
+		"id": "skill_pursuit",
+		"text": "{name} has been reading about {planet}'s training facilities. 'Captain, there's a course here I've wanted to take for years. If you can spare me for a rotation, I'll come back sharper.'",
+		"return_effect": "experience_boost",
+	},
+	{
+		"id": "family_matter",
+		"text": "{name} gets a message and goes quiet. After a moment: 'Captain, I need to deal with something. Family. I can't say more. I'll be here when you get back.'",
+		"return_effect": "loyalty_boost",
+	},
+	{
+		"id": "spiritual_journey",
+		"text": "{name} has been staring at the horizon since we docked. 'This place has meaning for me, Captain. I need to walk the old paths. Leave me here — I'll find my way back.'",
+		"return_effect": "trait_chance",
+	},
+]
+
+
+static func check_leave_request(roster: Array[CrewMember]) -> Dictionary:
+	## Called on planet arrival. Returns a decision event dict or empty dict.
+	## Only one leave request per port visit.
+	for cm: CrewMember in roster:
+		if cm.on_leave:
+			continue
+		if cm.grief_state == "GRIEVING":
+			continue
+
+		var days_aboard: int = GameManager.day_count - cm.hired_day
+		if days_aboard < LEAVE_MIN_DAYS_ABOARD:
+			continue
+		if cm.loyalty < LEAVE_MIN_LOYALTY:
+			continue
+
+		# Higher chance if fatigued or low morale
+		var adjusted_chance: float = LEAVE_REQUEST_CHANCE
+		if cm.fatigue > 60.0:
+			adjusted_chance += 0.02
+		if cm.morale < 40.0:
+			adjusted_chance += 0.02
+
+		# Lower chance if they've already taken leave before
+		if cm.leave_count > 0:
+			adjusted_chance *= 0.5
+
+		if randf() >= adjusted_chance:
+			continue
+
+		# Pick a leave reason
+		var reason: Dictionary = LEAVE_REASONS[randi() % LEAVE_REASONS.size()]
+
+		var planet: Dictionary = DatabaseManager.get_planet(GameManager.current_planet_id)
+
+		# Filter: skill_pursuit only at planets with training
+		if reason.id == "skill_pursuit":
+			var services: Array = JSON.parse_string(planet.get("services", "[]"))
+			if services == null or "training" not in services:
+				reason = LEAVE_REASONS[0]  # Fallback to personal_business
+		var planet_name: String = planet.get("name", "this port")
+		var request_text: String = reason.text.replace("{name}", cm.crew_name).replace("{planet}", planet_name)
+
+		return {
+			"id": "leave_request_%d" % cm.id,
+			"type": "leave_request",
+			"title": "Leave Request",
+			"text": request_text,
+			"crew_id": cm.id,
+			"crew_name": cm.crew_name,
+			"planet_id": GameManager.current_planet_id,
+			"planet_name": planet_name,
+			"leave_reason": reason.id,
+			"return_effect": reason.return_effect,
+			"options": [
+				{
+					"text": "Take the time you need. We'll be back.",
+					"action": "grant",
+					"hint": "Crew member stays at %s. You must return within %d days. Their role will be unfilled." % [planet_name, LEAVE_DURATION_DAYS],
+				},
+				{
+					"text": "I need you on the ship. Not now.",
+					"action": "refuse",
+					"hint": "They stay aboard. Morale and loyalty will take a hit.",
+				},
+			],
+		}
+
+	return {}
+
+
+static func resolve_leave_request(event_data: Dictionary, choice: int) -> Array[String]:
+	## Called when the captain resolves a leave request decision.
+	var events: Array[String] = []
+	var crew_id: int = event_data.get("crew_id", -1)
+	var crew_data: Dictionary = DatabaseManager.get_crew_member(crew_id)
+	if crew_data.is_empty():
+		return events
+
+	var crew_name: String = crew_data.get("name", "Unknown")
+
+	if choice == 0:
+		# Grant leave
+		var planet_id: int = event_data.get("planet_id", -1)
+		var planet_name: String = event_data.get("planet_name", "port")
+		var return_day: int = GameManager.day_count + LEAVE_DURATION_DAYS
+
+		DatabaseManager.update_crew_member(crew_id, {
+			"on_leave": 1,
+			"leave_planet_id": planet_id,
+			"leave_return_day": return_day,
+			"leave_reason": event_data.get("leave_reason", "personal_business"),
+		})
+
+		# Add a promise to return
+		GameManager.pending_promises.append({
+			"type": "crew_leave_return",
+			"ticks_remaining": LEAVE_DURATION_DAYS,
+			"crew_id": crew_id,
+			"planet_id": planet_id,
+			"planet_name": planet_name,
+			"leave_reason": event_data.get("leave_reason", ""),
+			"return_effect": event_data.get("return_effect", "memory"),
+		})
+
+		events.append("[color=#4A90D9]%s disembarks at %s. You'll need to return by Day %d.[/color]" % [
+			crew_name, planet_name, return_day])
+		events.append("[color=#555B66]  ↳ %s's role will be unfilled until they return.[/color]" % crew_name)
+
+		# Small loyalty boost for granting leave
+		var new_loyalty: float = clampf(crew_data.get("loyalty", 50.0) + 3.0, 0.0, 100.0)
+		DatabaseManager.update_crew_member(crew_id, {"loyalty": new_loyalty})
+
+		EventBus.crew_changed.emit()
+	else:
+		# Refuse leave
+		var new_morale: float = maxf(0.0, crew_data.get("morale", 50.0) - 8.0)
+		var new_loyalty: float = maxf(0.0, crew_data.get("loyalty", 50.0) - 5.0)
+		DatabaseManager.update_crew_member(crew_id, {
+			"morale": new_morale,
+			"loyalty": new_loyalty,
+		})
+
+		events.append("[color=#E67E22]%s nods. 'Understood, Captain.' They return to their station, but the disappointment is visible.[/color]" % crew_name)
+		events.append("[color=#555B66]  ↳ Morale dropped. Loyalty weakened.[/color]")
+
+	return events
+
+
+static func check_leave_return(roster: Array[CrewMember]) -> Array[String]:
+	## Called on planet arrival. Checks if any crew on leave should return.
+	## Returns event text. Also checks for expired leave (crew didn't come back in time).
+	var events: Array[String] = []
+
+	# Get ALL active crew including on-leave
+	var all_crew: Array = DatabaseManager.get_all_active_crew_including_leave(GameManager.save_id)
+
+	for row: Dictionary in all_crew:
+		if row.get("on_leave", 0) != 1:
+			continue
+
+		var crew_id: int = row.id
+		var leave_planet: int = row.get("leave_planet_id", -1)
+		var return_day: int = row.get("leave_return_day", -1)
+		var crew_name: String = row.get("name", "Unknown")
+
+		# Check if we're at their leave planet
+		if GameManager.current_planet_id == leave_planet:
+			# They're here — resolve the return
+			var return_events: Array[String] = _process_leave_return(row, all_crew)
+			events.append_array(return_events)
+			continue
+
+		# Check if leave has expired (we didn't come back in time)
+		if GameManager.day_count > return_day and return_day > 0:
+			# We missed the window — crew member may or may not still be waiting
+			var still_waiting: bool = randf() > 0.3  # 70% chance still waiting (forgiving)
+			if still_waiting:
+				events.append("[color=#E67E22]%s has been waiting at %s longer than expected. They're still there — but patience is wearing thin.[/color]" % [
+					crew_name, DatabaseManager.get_planet(leave_planet).get("name", "port")])
+				# Loyalty hit for being late
+				var new_loyalty: float = maxf(0.0, row.get("loyalty", 50.0) - 3.0)
+				DatabaseManager.update_crew_member(crew_id, {"loyalty": new_loyalty})
+			else:
+				# Crew member left — non-hostile departure
+				events.append("[color=#C0392B]%s got tired of waiting at %s. They've moved on. No hard feelings — you just never came back.[/color]" % [
+					crew_name, DatabaseManager.get_planet(leave_planet).get("name", "port")])
+
+				DatabaseManager.update_crew_member(crew_id, {"on_leave": 0, "is_active": 0})
+				DatabaseManager.delete_crew_relationships(crew_id)
+
+				# Non-hostile departure legacy
+				DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+					"crew_name": crew_name,
+					"crew_role": row.get("role", ""),
+					"departure_type": "leave_expired",
+					"legacy_text": "%s — Never came back for them (Day %d)" % [crew_name, GameManager.day_count],
+					"effect_type": "",
+					"effect_value": 0.0,
+					"effect_context": "",
+					"effect_ticks_remaining": 0,
+					"day_departed": GameManager.day_count,
+				})
+				EventBus.legacy_created.emit(crew_name, "leave_expired")
+				EventBus.crew_changed.emit()
+
+				# Other crew reaction — those who liked the departed crew are upset
+				for other_row: Dictionary in all_crew:
+					if other_row.id == crew_id or other_row.get("on_leave", 0) == 1:
+						continue
+					var rel: float = DatabaseManager.get_relationship_value(crew_id, other_row.id)
+					if rel > 20.0:
+						var other_morale: float = maxf(0.0, other_row.get("morale", 50.0) - 5.0)
+						var other_loyalty: float = maxf(0.0, other_row.get("loyalty", 50.0) - 3.0)
+						DatabaseManager.update_crew_member(other_row.id, {
+							"morale": other_morale,
+							"loyalty": other_loyalty,
+						})
+						events.append("[color=#718096]%s noticed %s never came back. They're not happy about it.[/color]" % [
+							other_row.get("name", ""), crew_name])
+
+	return events
+
+
+static func _process_leave_return(crew_row: Dictionary, all_crew: Array) -> Array[String]:
+	## Processes a crew member returning from leave at their planet.
+	var events: Array[String] = []
+	var crew_id: int = crew_row.id
+	var crew_name: String = crew_row.get("name", "Unknown")
+	var leave_reason: String = crew_row.get("leave_reason", "personal_business")
+
+	# Check if there's room — captain may have hired a replacement
+	var cm: CrewMember = CrewMember.from_dict(crew_row)
+	var available_slots: float = GameManager.get_available_crew_slots()
+	var slot_cost: float = 1.0
+	if cm.species == CrewMember.Species.KRELLVANI and GameManager.ship_class in ["corvette", "frigate"]:
+		slot_cost = 1.5
+
+	if available_slots < slot_cost:
+		# No room — captain replaced them
+		events.append("[color=#E67E22]%s arrives at the dock to find their berth filled. There's no room. 'I see how it is, Captain.' They walk away without another word.[/color]" % crew_name)
+
+		DatabaseManager.update_crew_member(crew_id, {"on_leave": 0, "is_active": 0})
+		DatabaseManager.delete_crew_relationships(crew_id)
+
+		DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+			"crew_name": crew_name,
+			"crew_role": crew_row.get("role", ""),
+			"departure_type": "leave_replaced",
+			"legacy_text": "%s — Replaced while on leave (Day %d)" % [crew_name, GameManager.day_count],
+			"effect_type": "suspicion",
+			"effect_value": -5.0,
+			"effect_context": "new_hire",
+			"effect_ticks_remaining": 20,
+			"day_departed": GameManager.day_count,
+		})
+		EventBus.legacy_created.emit(crew_name, "leave_replaced")
+		EventBus.crew_changed.emit()
+
+		# Crew who liked them are upset
+		for other_row: Dictionary in all_crew:
+			if other_row.id == crew_id or other_row.get("on_leave", 0) == 1:
+				continue
+			var rel: float = DatabaseManager.get_relationship_value(crew_id, other_row.id)
+			if rel > 20.0:
+				var other_loyalty: float = maxf(0.0, other_row.get("loyalty", 50.0) - 5.0)
+				DatabaseManager.update_crew_member(other_row.id, {"loyalty": other_loyalty})
+				events.append("[color=#C0392B]%s saw what happened to %s. Trust has taken a hit.[/color]" % [
+					other_row.get("name", ""), crew_name])
+
+		return events
+
+	# Small chance of not returning (decided to stay)
+	if randf() < LEAVE_NOT_RETURN_CHANCE:
+		events.append("[color=#E67E22]You look for %s at the agreed meeting point, but they're not there. After waiting, a message arrives: 'Captain, I've decided to stay. This is where I need to be. Thank you for everything.'[/color]" % crew_name)
+
+		DatabaseManager.update_crew_member(crew_id, {"on_leave": 0, "is_active": 0})
+		DatabaseManager.delete_crew_relationships(crew_id)
+
+		DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+			"crew_name": crew_name,
+			"crew_role": crew_row.get("role", ""),
+			"departure_type": "leave_stayed",
+			"legacy_text": "%s — Chose to stay behind (Day %d)" % [crew_name, GameManager.day_count],
+			"effect_type": "",
+			"effect_value": 0.0,
+			"effect_context": "",
+			"effect_ticks_remaining": 0,
+			"day_departed": GameManager.day_count,
+		})
+		EventBus.legacy_created.emit(crew_name, "leave_stayed")
+		EventBus.crew_changed.emit()
+
+		events.append("[color=#555B66]  ↳ A peaceful departure. No ill will.[/color]")
+		return events
+
+	# Crew member returns — apply return effect based on leave reason
+	events.append("[color=#27AE60]%s is waiting at the dock. They look different — settled, somehow. 'Good to be back, Captain.'[/color]" % crew_name)
+
+	var return_effect: String = _get_return_effect_for_reason(leave_reason)
+
+	match return_effect:
+		"memory":
+			var planet: Dictionary = DatabaseManager.get_planet(cm.leave_planet_id)
+			var planet_name: String = planet.get("name", "port")
+			_create_memory(cm, {
+				"trigger_text": "Personal time on %s — returned changed" % planet_name,
+				"emotional_tag": "GRATEFUL",
+				"modifier_type": "MORALE_IN_CONTEXT",
+				"modifier_value": 3.0,
+				"context_match": "travel",
+				"significance": 2.0,
+			})
+			events.append("[color=#718096]Whatever they did, it clearly meant something to them.[/color]")
+			events.append("[color=#555B66]  ↳ Formative memory gained.[/color]")
+
+		"social_boost":
+			cm.social = mini(cm.social + 5, 100)
+			DatabaseManager.update_crew_member(crew_id, {"social": cm.social})
+			events.append("[color=#718096]The old friend encounter left its mark. %s seems more at ease with people.[/color]" % crew_name)
+			events.append("[color=#555B66]  ↳ Social +5.[/color]")
+
+		"full_rest":
+			cm.fatigue = 0.0
+			cm.morale = clampf(cm.morale + 20.0, 0.0, 100.0)
+			DatabaseManager.update_crew_member(crew_id, {"fatigue": 0.0, "morale": cm.morale})
+			events.append("[color=#718096]Real rest. %s looks ten years younger.[/color]" % crew_name)
+			events.append("[color=#555B66]  ↳ Fatigue cleared. Morale boosted.[/color]")
+
+		"experience_boost":
+			cm.add_role_experience(25.0)
+			DatabaseManager.update_crew_member(crew_id, {"role_experience": cm.role_experience})
+			var new_label: String = cm.get_growth_label()
+			events.append("[color=#718096]The training paid off. %s came back sharper.[/color]" % crew_name)
+			events.append("[color=#555B66]  ↳ Significant experience gained. Now: %s.[/color]" % new_label)
+
+		"loyalty_boost":
+			cm.loyalty = clampf(cm.loyalty + 10.0, 0.0, 100.0)
+			DatabaseManager.update_crew_member(crew_id, {"loyalty": cm.loyalty})
+			events.append("[color=#718096]%s doesn't talk about what happened. But they seem more committed to this crew than ever.[/color]" % crew_name)
+			events.append("[color=#555B66]  ↳ Loyalty significantly increased.[/color]")
+
+		"trait_chance":
+			# 40% chance of gaining Leave Changed trait
+			if randf() < 0.40 and not cm.has_trait("leave_changed"):
+				cm.traits.append("leave_changed")
+				DatabaseManager.update_crew_member(crew_id, {"traits": JSON.stringify(cm.traits)})
+				events.append("[color=#E6D159][b]Trait Acquired:[/b] Leave Changed — %s returned from leave with a new perspective.[/color]" % crew_name)
+				EventBus.crew_trait_acquired.emit(cm.id, cm.crew_name, "leave_changed", "Leave Changed")
+			else:
+				cm.morale = clampf(cm.morale + 10.0, 0.0, 100.0)
+				DatabaseManager.update_crew_member(crew_id, {"morale": cm.morale})
+				events.append("[color=#718096]%s came back quieter, but content.[/color]" % crew_name)
+				events.append("[color=#555B66]  ↳ Morale boosted.[/color]")
+
+	# Finalize return
+	cm.leave_count += 1
+	DatabaseManager.update_crew_member(crew_id, {
+		"on_leave": 0,
+		"leave_planet_id": -1,
+		"leave_return_day": -1,
+		"leave_reason": "",
+		"leave_count": cm.leave_count,
+	})
+
+	# Remove the promise from pending
+	var remaining: Array[Dictionary] = []
+	for promise: Dictionary in GameManager.pending_promises:
+		if promise.get("type", "") == "crew_leave_return" and promise.get("crew_id", -1) == crew_id:
+			continue
+		remaining.append(promise)
+	GameManager.pending_promises = remaining
+
+	EventBus.crew_changed.emit()
+	return events
+
+
+static func _get_return_effect_for_reason(reason: String) -> String:
+	## Maps leave reason ID to return effect type.
+	for r: Dictionary in LEAVE_REASONS:
+		if r.id == reason:
+			return r.return_effect
+	return "memory"
+
+
+# === PHASE 6B: SHORE LEAVE BEHAVIORS ===
+
+static func process_shore_leave_behaviors(roster: Array[CrewMember], planet_id: int) -> Array[String]:
+	## Called once on planet arrival. Each crew member may autonomously spend wallet
+	## on an activity based on personality, state, and available services.
+	## Returns log event strings.
+	var events: Array[String] = []
+	var planet: Dictionary = DatabaseManager.get_planet(planet_id)
+	var services_str: String = planet.get("services", "[]")
+	var services: Variant = JSON.parse_string(services_str)
+	if services == null:
+		services = []
+	var planet_faction: String = planet.get("faction", "")
+
+	for cm: CrewMember in roster:
+		if cm.on_leave:
+			continue
+		if cm.wallet < 5.0:
+			continue  # Can't afford anything
+
+		# 40% chance a crew member does something on their own
+		if randf() > 0.40:
+			continue
+
+		var behavior: Dictionary = _pick_shore_behavior(cm, services as Array, planet_faction)
+		if behavior.is_empty():
+			continue
+
+		var cost: float = behavior.get("cost", 0.0)
+		if cm.wallet < cost:
+			continue
+
+		# Deduct from wallet
+		cm.wallet -= cost
+
+		# Apply effects
+		if behavior.has("morale"):
+			cm.morale = clampf(cm.morale + behavior.morale, 0.0, 100.0)
+		if behavior.has("fatigue"):
+			cm.fatigue = maxf(0.0, cm.fatigue + behavior.fatigue)  # Negative = reduction
+
+		DatabaseManager.update_crew_member(cm.id, {
+			"wallet": cm.wallet,
+			"morale": cm.morale,
+			"fatigue": cm.fatigue,
+		})
+
+		events.append("[color=#718096]%s[/color]" % behavior.text)
+		if cost > 0:
+			events.append("[color=#555B66]  ↳ Spent %d cr from personal funds.[/color]" % int(cost))
+
+	return events
+
+
+static func _pick_shore_behavior(cm: CrewMember, services: Array, faction: String) -> Dictionary:
+	## Picks an autonomous shore leave behavior based on crew state and personality.
+	var options: Array[Dictionary] = []
+
+	# Fatigue-driven behaviors
+	if cm.fatigue > 60.0:
+		match cm.species:
+			CrewMember.Species.KRELLVANI:
+				if "cantina" in services or "training" in services:
+					options.append({
+						"text": "%s heads to the fighting gym. Comes back bruised but grinning." % cm.crew_name,
+						"cost": 10.0, "morale": 5.0, "fatigue": -8.0,
+					})
+			CrewMember.Species.VELLANI:
+				if "cultural" in services:
+					options.append({
+						"text": "%s slips away to attend a quiet performance. Returns looking peaceful." % cm.crew_name,
+						"cost": 8.0, "morale": 8.0, "fatigue": -5.0,
+					})
+			_:
+				options.append({
+					"text": "%s finds a quiet corner and sleeps for sixteen hours straight." % cm.crew_name,
+					"cost": 5.0, "morale": 3.0, "fatigue": -10.0,
+				})
+
+	# Low morale behaviors
+	if cm.morale < 40.0:
+		if "cantina" in services:
+			options.append({
+				"text": "%s spends the evening at the bar. Alone. Comes back slightly less wound up." % cm.crew_name,
+				"cost": 12.0, "morale": 6.0, "fatigue": -3.0,
+			})
+		match cm.species:
+			CrewMember.Species.VELLANI:
+				options.append({
+					"text": "%s attends a cultural performance alone. The music helps." % cm.crew_name,
+					"cost": 10.0, "morale": 8.0, "fatigue": 0.0,
+				})
+			CrewMember.Species.GORVIAN:
+				options.append({
+					"text": "%s spends the day in the technical archives. Gets lost in schematics. Comes back calmer." % cm.crew_name,
+					"cost": 5.0, "morale": 5.0, "fatigue": -3.0,
+				})
+
+	# High Social crew — socializing
+	if cm.social > 60 and "cantina" in services:
+		options.append({
+			"text": "%s runs up a tab at the cantina talking to everyone. Half the port knows their name by morning." % cm.crew_name,
+			"cost": 15.0, "morale": 5.0, "fatigue": -2.0,
+		})
+
+	# Impulse purchase — personality-driven
+	if cm.wallet > 30.0 and randf() < 0.15:
+		if "shop" in services:
+			var purchases: Array[Dictionary] = [
+				{"text": "%s comes back from the market with something wrapped in cloth. Won't say what it is." % cm.crew_name,
+				 "cost": 20.0, "morale": 8.0, "fatigue": 0.0},
+				{"text": "%s bought a small instrument at the market. The crew braces for practice sessions." % cm.crew_name,
+				 "cost": 15.0, "morale": 6.0, "fatigue": 0.0},
+				{"text": "%s found a book of star maps from before the war. Spent too much on it. No regrets." % cm.crew_name,
+				 "cost": 25.0, "morale": 10.0, "fatigue": 0.0},
+				{"text": "%s returns from shore leave wearing a new jacket. It's hideous. They love it." % cm.crew_name,
+				 "cost": 18.0, "morale": 7.0, "fatigue": 0.0},
+			]
+			options.append(purchases[randi() % purchases.size()])
+
+	# Faction homeworld — homesick crew visiting home
+	if cm.get_species_name() == faction:
+		options.append({
+			"text": "%s disappears into the crowd for a few hours. Comes back smelling like home cooking." % cm.crew_name,
+			"cost": 8.0, "morale": 10.0, "fatigue": -5.0,
+		})
+
+	# Generic fallback
+	options.append({
+		"text": "%s wanders the port for a while. Nothing special — but it's good to stretch their legs." % cm.crew_name,
+		"cost": 5.0, "morale": 3.0, "fatigue": -3.0,
+	})
+
+	if options.is_empty():
+		return {}
+
+	return options[randi() % options.size()]
+
+
+# === PHASE 6C: CHARACTER TEXTURE — TROUBLE ASHORE ===
+
+static func _build_trouble_ashore(cm: CrewMember) -> Dictionary:
+	var bail_cost: int = randi_range(50, 150)
+	var trouble_texts: Array[String] = [
+		"%s didn't come back from shore leave on time. You get word they're in a holding cell at the port authority. Apparently it was a 'misunderstanding.'" % cm.crew_name,
+		"%s got into a card game they couldn't finish. The locals are holding them until someone covers the debt." % cm.crew_name,
+		"A message from port security: '%s is being detained. Minor altercation. Bail is %d credits.'" % [cm.crew_name, bail_cost],
+	]
+
+	return {
+		"id": "trouble_ashore_%d" % cm.id,
+		"type": "trouble_ashore",
+		"title": "Trouble Ashore",
+		"text": trouble_texts[randi() % trouble_texts.size()],
+		"crew_id": cm.id,
+		"crew_name": cm.crew_name,
+		"bail_cost": bail_cost,
+		"options": [
+			{
+				"text": "Pay the bail (%d credits)" % bail_cost,
+				"action": "bail_out",
+				"hint": "Costs %d credits. Crew member returns. Loyalty boost." % bail_cost,
+			},
+			{
+				"text": "They can sort it out themselves",
+				"action": "leave_them",
+				"hint": "Crew member returns late. Morale and loyalty hit. Small chance they don't come back.",
+			},
+		],
+	}
+
+
+static func resolve_trouble_ashore(event_data: Dictionary, choice: int) -> Array[String]:
+	var events: Array[String] = []
+	var crew_id: int = event_data.get("crew_id", -1)
+	var crew_data: Dictionary = DatabaseManager.get_crew_member(crew_id)
+	if crew_data.is_empty():
+		return events
+
+	var crew_name: String = crew_data.get("name", "Unknown")
+	var bail_cost: int = event_data.get("bail_cost", 100)
+
+	if choice == 0:
+		# Bail them out
+		if GameManager.spend_credits(bail_cost):
+			var new_loyalty: float = clampf(crew_data.get("loyalty", 50.0) + 5.0, 0.0, 100.0)
+			DatabaseManager.update_crew_member(crew_id, {"loyalty": new_loyalty})
+			events.append("[color=#27AE60]You pay the bail. %s walks out looking sheepish. 'Won't happen again, Captain.' Their loyalty deepens.[/color]" % crew_name)
+			events.append("[color=#555B66]  ↳ -%d credits. Loyalty strengthened.[/color]" % bail_cost)
+		else:
+			events.append("[color=#C0392B]You don't have enough credits to cover the bail.[/color]")
+	else:
+		# Leave them to sort it out
+		var new_morale: float = maxf(0.0, crew_data.get("morale", 50.0) - 10.0)
+		var new_loyalty: float = maxf(0.0, crew_data.get("loyalty", 50.0) - 8.0)
+		DatabaseManager.update_crew_member(crew_id, {
+			"morale": new_morale,
+			"loyalty": new_loyalty,
+		})
+		events.append("[color=#E67E22]%s eventually sorts it out on their own. They're not happy about being left to deal with it.[/color]" % crew_name)
+		events.append("[color=#555B66]  ↳ Morale and loyalty dropped.[/color]")
+
+		# 5% chance they don't come back at all
+		if randf() < 0.05:
+			events.append("[color=#C0392B]Actually — %s never came back. Port records show they signed on with another crew.[/color]" % crew_name)
+			DatabaseManager.update_crew_member(crew_id, {"is_active": 0})
+			DatabaseManager.delete_crew_relationships(crew_id)
+			DatabaseManager.insert_crew_legacy(GameManager.save_id, {
+				"crew_name": crew_name,
+				"crew_role": crew_data.get("role", ""),
+				"departure_type": "trouble_ashore",
+				"legacy_text": "%s — Lost at port (Day %d)" % [crew_name, GameManager.day_count],
+				"effect_type": "",
+				"effect_value": 0.0,
+				"effect_context": "",
+				"effect_ticks_remaining": 0,
+				"day_departed": GameManager.day_count,
+			})
+			EventBus.legacy_created.emit(crew_name, "trouble_ashore")
+			EventBus.crew_changed.emit()
+
+	return events

@@ -159,7 +159,10 @@ func _populate_crew_grid() -> void:
 	for child: Node in crew_grid.get_children():
 		child.queue_free()
 
-	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+	var all_crew_rows: Array = DatabaseManager.get_all_active_crew_including_leave(GameManager.save_id)
+	var roster: Array[CrewMember] = []
+	for row: Dictionary in all_crew_rows:
+		roster.append(CrewMember.from_dict(row))
 	var total_slots: int = GameManager.crew_max
 
 	# Add filled slots
@@ -209,6 +212,9 @@ func _make_crew_slot(cm: CrewMember) -> PanelContainer:
 	# Phase 5.3: Quarantine indicator
 	if cm.is_quarantined:
 		info_text += " Q"
+	# Phase 6: On leave indicator
+	if cm.on_leave:
+		info_text += " [ON LEAVE]"
 	info_lbl.text = info_text
 	info_lbl.add_theme_font_size_override("font_size", 10)
 	info_lbl.add_theme_color_override("font_color", Color(COLOR_MUTED))
@@ -362,6 +368,22 @@ func _show_crew_profile(cm: CrewMember) -> void:
 			rom_lbl.add_theme_font_size_override("font_size", 11)
 			rom_lbl.add_theme_color_override("font_color", Color("#E6D159"))
 			detail_panel.add_child(rom_lbl)
+
+	# Phase 6: On leave display
+	if cm.on_leave:
+		var leave_planet: Dictionary = DatabaseManager.get_planet(cm.leave_planet_id)
+		var leave_planet_name: String = leave_planet.get("name", "unknown")
+		var days_remaining: int = cm.leave_return_day - GameManager.day_count
+		var leave_lbl: Label = Label.new()
+		if days_remaining > 0:
+			leave_lbl.text = "ON LEAVE at %s — return by Day %d (%d days)" % [
+				leave_planet_name, cm.leave_return_day, days_remaining]
+		else:
+			leave_lbl.text = "ON LEAVE at %s — overdue (expected Day %d)" % [
+				leave_planet_name, cm.leave_return_day]
+		leave_lbl.add_theme_font_size_override("font_size", 11)
+		leave_lbl.add_theme_color_override("font_color", Color(COLOR_WARN))
+		detail_panel.add_child(leave_lbl)
 
 	# Wallet / earnings info
 	if cm.lifetime_earnings > 0.0 or cm.wallet > 0.0:
@@ -838,6 +860,14 @@ func _add_crew_legacy_section(content: VBoxContainer) -> void:
 				dep_color = COLOR_WARN
 			"underpaid":
 				dep_color = COLOR_MUTED
+			"leave_expired":
+				dep_color = COLOR_MUTED
+			"leave_stayed":
+				dep_color = COLOR_MUTED
+			"leave_replaced":
+				dep_color = COLOR_WARN
+			"trouble_ashore":
+				dep_color = COLOR_MUTED
 			_:
 				dep_color = COLOR_MUTED
 
@@ -857,6 +887,14 @@ func _add_crew_legacy_section(content: VBoxContainer) -> void:
 				dep_display = "Dismissed (amicably)"
 			"dismissal_negative":
 				dep_display = "Dismissed (bitter)"
+			"leave_expired":
+				dep_display = "Never came back for"
+			"leave_stayed":
+				dep_display = "Chose to stay"
+			"leave_replaced":
+				dep_display = "Replaced while on leave"
+			"trouble_ashore":
+				dep_display = "Lost at port"
 			_:
 				dep_display = "Departed"
 

@@ -589,12 +589,22 @@ func _process_crew_arrival() -> void:
 	if GameManager.get_crew_count() <= 0:
 		return
 
+	var roster: Array[CrewMember] = GameManager.get_crew_roster()
+
+	# Check for crew returning from leave
+	var return_events: Array[String] = CrewSimulation.check_leave_return(roster)
+	for event_text: String in return_events:
+		_append_log(event_text)
+
 	var arrival_events: Array[String] = CrewSimulation.tick_planet_arrival()
-	if arrival_events.is_empty():
-		return
 
 	_append_log("")
 	for event_text: String in arrival_events:
+		_append_log(event_text)
+
+	# Shore leave autonomous behaviors
+	var shore_events: Array[String] = CrewSimulation.process_shore_leave_behaviors(roster, GameManager.current_planet_id)
+	for event_text: String in shore_events:
 		_append_log(event_text)
 
 	# Show ship-wide morale summary on arrival
@@ -602,6 +612,11 @@ func _process_crew_arrival() -> void:
 	var morale_color: String = GameManager.get_ship_morale_color()
 	_append_log("[color=%s]Ship morale: %s[/color]" % [morale_color, morale_word])
 	_append_log("")
+
+	# Check for new leave requests
+	var leave_request: Dictionary = CrewSimulation.check_leave_request(roster)
+	if not leave_request.is_empty():
+		_on_decision_event(leave_request)
 
 
 func _log_faction_access(planet: Dictionary) -> void:

@@ -811,6 +811,12 @@ func _migrate_schema() -> void:
 	_add_column_if_missing("save_state", "combat_morale_resistance", "REAL DEFAULT 0.0")
 	# Phase 6: Hospital checkup bonus
 	_add_column_if_missing("crew_members", "checkup_bonus_ticks", "INTEGER DEFAULT 0")
+	# Phase 6: Temporary leave
+	_add_column_if_missing("crew_members", "on_leave", "INTEGER DEFAULT 0")
+	_add_column_if_missing("crew_members", "leave_planet_id", "INTEGER DEFAULT -1")
+	_add_column_if_missing("crew_members", "leave_return_day", "INTEGER DEFAULT -1")
+	_add_column_if_missing("crew_members", "leave_reason", "TEXT DEFAULT ''")
+	_add_column_if_missing("crew_members", "leave_count", "INTEGER DEFAULT 0")
 	# Phase 6: Economy tracking
 	_add_column_if_missing("save_state", "total_credits_earned", "INTEGER DEFAULT 0")
 	_add_column_if_missing("save_state", "total_credits_spent", "INTEGER DEFAULT 0")
@@ -988,7 +994,12 @@ func insert_crew_member(save_id: int, data: Dictionary) -> int:
 
 
 func get_active_crew(save_id: int) -> Array:
-	## Returns all active crew members for a save.
+	## Returns all active crew members who are NOT on leave.
+	return db.select_rows("crew_members", "save_id = %d AND is_active = 1 AND on_leave = 0" % save_id, ["*"])
+
+
+func get_all_active_crew_including_leave(save_id: int) -> Array:
+	## Returns all active crew members including those on leave.
 	return db.select_rows("crew_members", "save_id = %d AND is_active = 1" % save_id, ["*"])
 
 
@@ -1000,7 +1011,7 @@ func get_crew_member(crew_id: int) -> Dictionary:
 
 
 func get_active_crew_count(save_id: int) -> int:
-	var rows: Array = db.select_rows("crew_members", "save_id = %d AND is_active = 1" % save_id, ["id"])
+	var rows: Array = db.select_rows("crew_members", "save_id = %d AND is_active = 1 AND on_leave = 0" % save_id, ["id"])
 	return rows.size()
 
 

@@ -99,6 +99,57 @@ static func _generate_background_events(roster: Array[CrewMember]) -> Array[Stri
 			roster[idx_a].crew_name, roster[idx_b].crew_name)
 		events.append(CrewEventTemplates.format_observation(text))
 
+	# === CHARACTER TEXTURE EVENTS (Phase 6C) ===
+
+	for cm: CrewMember in roster:
+		# Sending money home — 3% chance per crew member per tick
+		if cm.wallet > 20.0 and randf() < 0.03:
+			var send_amount: float = minf(cm.wallet * 0.2, 30.0)
+			cm.wallet -= send_amount
+			DatabaseManager.update_crew_member(cm.id, {"wallet": cm.wallet})
+			var home_texts: Array[String] = [
+				"%s transfers %d credits to an account back home. No explanation." % [cm.crew_name, int(send_amount)],
+				"%s sends a message with a funds transfer attached. Family, probably." % cm.crew_name,
+				"%s moves %d credits off-ship. 'For someone who needs it more,' is all they say." % [cm.crew_name, int(send_amount)],
+			]
+			events.append(CrewEventTemplates.format_observation(home_texts[randi() % home_texts.size()]))
+
+		# Recurring quiet day — same crew member goes quiet periodically (every 30 days from hire)
+		if (GameManager.day_count - cm.hired_day) > 20 and (GameManager.day_count - cm.hired_day) % 30 == 0:
+			var quiet_texts: Array[String] = [
+				"%s is quiet today. Won't say why. It happens every now and then." % cm.crew_name,
+				"%s didn't come to mess this morning. Found them staring at nothing in the observation bay." % cm.crew_name,
+				"%s skipped their shift routine today. Just sat in their bunk. Nobody pushed it." % cm.crew_name,
+			]
+			events.append(CrewEventTemplates.format_observation(quiet_texts[randi() % quiet_texts.size()]))
+
+		# Crew ambitions — foreshadowing departure (only for experienced crew)
+		if cm.role_experience > 100.0 and cm.lifetime_earnings > 500.0 and randf() < 0.01:
+			var ambition_texts: Array[String] = []
+			match cm.species:
+				CrewMember.Species.GORVIAN:
+					ambition_texts = [
+						"%s mentions an engineering patent they've been drafting in their off-hours." % cm.crew_name,
+						"%s talks about the workshop they'd open someday. 'If the numbers ever work out.'" % cm.crew_name,
+					]
+				CrewMember.Species.VELLANI:
+					ambition_texts = [
+						"%s talks about a restoration project back home. 'Someday,' they say. But they mean it." % cm.crew_name,
+						"%s mentions wanting to teach. 'Not yet. But eventually.'" % cm.crew_name,
+					]
+				CrewMember.Species.KRELLVANI:
+					ambition_texts = [
+						"%s talks about running their own ship one day. Not a threat — a dream." % cm.crew_name,
+						"%s mentions a territory dispute back home they'd like to settle. 'When I have the credits.'" % cm.crew_name,
+					]
+				_:
+					ambition_texts = [
+						"%s stares at the nav charts after hours. Plotting something personal, maybe." % cm.crew_name,
+						"%s mentions a life outside the ship for the first time. 'Just thinking out loud, Captain.'" % cm.crew_name,
+					]
+			if not ambition_texts.is_empty():
+				events.append(CrewEventTemplates.format_observation(ambition_texts[randi() % ambition_texts.size()]))
+
 	# Phase 4.2: Memory-referenced dialogue (30% chance per crew member with memories)
 	for cm: CrewMember in roster:
 		if cm.memories.is_empty():
@@ -475,6 +526,20 @@ static func _build_quarantine_decision(roster: Array[CrewMember], species_key: S
 static func resolve_decision(event_id: String, choice: int, event_data: Dictionary) -> String:
 	## Applies mechanical consequences of a decision choice. Returns result text.
 	GameManager.ticks_since_last_decision = 0
+
+	# Phase 6: Leave request decisions
+	if event_data.get("type", "") == "leave_request":
+		var leave_events: Array[String] = CrewSimulation.resolve_leave_request(event_data, choice)
+		for ev: String in leave_events:
+			EventBus.message_logged.emit(ev, Color.WHITE)
+		return "Leave request resolved."
+
+	# Phase 6: Trouble ashore decisions
+	if event_data.get("type", "") == "trouble_ashore":
+		var trouble_events: Array[String] = CrewSimulation.resolve_trouble_ashore(event_data, choice)
+		for ev: String in trouble_events:
+			EventBus.message_logged.emit(ev, Color.WHITE)
+		return "Shore leave incident resolved."
 
 	# Phase 5.4: Crew-generated mission decisions
 	if event_data.get("type", "") == "crew_generated_mission":

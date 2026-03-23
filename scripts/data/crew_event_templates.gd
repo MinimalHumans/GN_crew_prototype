@@ -443,4 +443,12 @@ static func get_legacy_display_text(crew_name: String, departure_type: String,
 			return "Nobody's said it out loud, but the ship breathes easier."
 		"dismissal_negative":
 			return "The crew hasn't forgotten how %s left." % crew_name
+		"leave_expired":
+			return "We never went back. That's on us."
+		"leave_stayed":
+			return "They found what they were looking for."
+		"leave_replaced":
+			return "The crew remembers how %s was treated." % crew_name
+		"trouble_ashore":
+			return "Port life claimed another one."
 	return ""

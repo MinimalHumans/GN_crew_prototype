@@ -75,6 +75,13 @@ var stat_bonus_all: int = 0  # Permanent all-stat modifier (positive or negative
 # Phase 6: Hospital checkup
 var checkup_bonus_ticks: int = 0  # Ticks remaining of +5 fatigue recovery bonus
 
+# Phase 6: Temporary leave
+var on_leave: bool = false
+var leave_planet_id: int = -1
+var leave_return_day: int = -1
+var leave_reason: String = ""
+var leave_count: int = 0
+
 # Faction zone tracking for Trusted by Faction trait
 var faction_zones_visited: Array = []  # Array of faction zone strings visited while aboard
 
@@ -237,6 +244,14 @@ const TRAIT_DEFINITIONS: Dictionary = {
 		"positive": {"stats": {"stamina": 3, "cognition": 3, "reflexes": 3, "social": 3, "resourcefulness": 3}},
 		"negative": {},
 		"acquisition_text": "{name} walks off the bridge and the crew parts for them — not in fear, but respect. The desperate stowaway is gone.",
+	},
+	# Phase 6: Leave trait
+	"leave_changed": {
+		"name": "Leave Changed",
+		"description": "Returned from leave with new perspective.",
+		"positive": {"stats": {"social": 3, "cognition": 2}},
+		"negative": {},
+		"acquisition_text": "{name} came back from leave different. Quieter, maybe. But there's something steadier about them now.",
 	},
 	# Phase 5.5: Grief resolution traits
 	"resolved": {
@@ -839,6 +854,12 @@ static func from_dict(data: Dictionary) -> CrewMember:
 	cm.grief_ticks_remaining = data.get("grief_ticks_remaining", 0)
 	cm.stat_bonus_all = data.get("stat_bonus_all", 0)
 	cm.checkup_bonus_ticks = data.get("checkup_bonus_ticks", 0)
+	# Phase 6: Temporary leave
+	cm.on_leave = bool(data.get("on_leave", 0))
+	cm.leave_planet_id = data.get("leave_planet_id", -1)
+	cm.leave_return_day = data.get("leave_return_day", -1)
+	cm.leave_reason = data.get("leave_reason", "")
+	cm.leave_count = data.get("leave_count", 0)
 	# Parse faction zones visited
 	var fzv_str: String = data.get("faction_zones_visited", "[]")
 	if fzv_str != "" and fzv_str != "[]":
@@ -925,6 +946,11 @@ func to_dict() -> Dictionary:
 		"grief_ticks_remaining": grief_ticks_remaining,
 		"stat_bonus_all": stat_bonus_all,
 		"checkup_bonus_ticks": checkup_bonus_ticks,
+		"on_leave": 1 if on_leave else 0,
+		"leave_planet_id": leave_planet_id,
+		"leave_return_day": leave_return_day,
+		"leave_reason": leave_reason,
+		"leave_count": leave_count,
 		"faction_zones_visited": JSON.stringify(faction_zones_visited),
 		"wallet": wallet,
 		"lifetime_earnings": lifetime_earnings,
